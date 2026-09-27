@@ -72,11 +72,19 @@ Installed-addon state lives at
 # remove an addon (deletes its folders + drops it from state)
 ./build/wam remove <modId>
 
+# update a tracked addon (shows current vs. latest, asks before applying)
+./build/wam update <modId> --flavor Retail
+./build/wam update <modId> --yes             # skip the confirmation prompt
+
+# update everything tracked, one diff/prompt per addon
+./build/wam update-all --flavor Retail
+
 # find folders in AddOns/ that wam doesn't track yet, grouped by whatever
 # CurseForge mod id their .toc claims (X-Curse-Project-ID)
 ./build/wam scan
 
-# adopt every untracked folder tagged for a given mod in one go
+# adopt every untracked folder tagged for a given mod, plus any sibling
+# modules an API key lets us cross-check via that mod's moduleNames
 ./build/wam adopt --mod-id <modId>
 
 # manually assign one folder (e.g. no X-Curse-Project-ID tag was found,
@@ -118,10 +126,28 @@ Does:
   commits a match — or a manual override — into `installed.json`. Note this
   identifies *which mod*, not *which exact file/version*: there's no
   per-version tag in the `.toc`, so an adopted addon is recorded with
-  `fileId = 0` ("unknown") until a future update pins it to a real
-  CurseForge file. A folder with no tag at all (hand-written addons, or
-  ones from a source other than CurseForge) needs `--folder ... --mod-id
-  ...` to assign by hand.
+  `fileId = 0` ("unknown") until `wam update` pins it to a real CurseForge
+  file. Also note that in practice, most multi-module addons only stamp the
+  tag into their *primary* module's `.toc` — the rest ship untagged. Because
+  of this, `adopt --mod-id <id>` doesn't just union self-tagged folders: if
+  an API key is configured, it additionally cross-checks the mod's known
+  files' `moduleNames` against whatever's sitting untracked on disk, so
+  sibling modules (ActionBars, Bags, etc.) get claimed too. With no API key,
+  only self-tagged folders adopt, and `wam update <modId>` afterward will
+  still pick up the rest on its next real install. A folder with no tag at
+  all and no matching sibling (hand-written addons, or ones from a source
+  other than CurseForge) needs `--folder ... --mod-id ...` to assign by
+  hand.
+- **Updating tracked addons.** `wam update <modId>` fetches the current
+  best file for that mod's tracked channel/flavor, shows current-vs-latest,
+  and asks for confirmation before downloading and re-extracting (`--yes`
+  skips the prompt, for scripting). `wam update-all` does the same for
+  every CurseForge-sourced tracked addon in one pass. An update does a
+  clean swap — old folders are removed before the new file's folders are
+  extracted, so a module the new release dropped doesn't linger — and
+  always re-derives the true folder set from the freshly-extracted zip
+  regardless of what was tracked before, which is also how this recovers
+  an adopted addon's `fileId = 0` into a real pinned file.
 
 Does not yet do (later phases per the agreed plan):
 - Any UI (phase 3) — this is CLI-only by design for this milestone
@@ -155,9 +181,10 @@ docs rather than patched by guesswork:
 
 This was built and tested in a sandboxed container whose network egress
 does not include `api.curseforge.com`, so the CurseForge calls (`search`,
-`files`, `install`) are implemented and unit-tested for parsing/selection
-logic, but not exercised against the live API from here — that verification
+`files`, `install`, `update`, `update-all`, and `adopt`'s moduleNames
+cross-check) are implemented and unit-tested for parsing/selection logic,
+but not exercised against the live API from here — that verification
 needs to happen on your machine with your real key. `install-manual`,
-`list`, `remove`, zip extraction (including the zip-slip guard), and the
-state store are fully exercised end-to-end (see "Build" above and
-`tests/test_main.cpp`).
+`list`, `remove`, `scan`, `adopt`'s self-tagged (offline) path, zip
+extraction (including the zip-slip guard), and the state store are fully
+exercised end-to-end (see "Build" above and `tests/test_main.cpp`).

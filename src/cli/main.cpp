@@ -10,6 +10,7 @@
 #include <sstream>
 #include <optional>
 #include <algorithm>
+#include <unordered_set>
 #include <cstdlib>
 
 using namespace wam;
@@ -28,6 +29,9 @@ void printUsage() {
         "  wam flavors                       (list known WoW flavors/version-types)\n"
         "  wam files <modId> [--flavor <name>]\n"
         "  wam install <modId> [--channel release|beta|alpha] [--flavor <name>]\n\n"
+        "Updates (shows current-vs-latest and asks before applying; --yes skips the prompt):\n"
+        "  wam update <modId> [--channel release|beta|alpha] [--flavor <name>] [--yes]\n"
+        "  wam update-all [--flavor <name>] [--yes]\n\n"
         "Manual install (for addons with third-party downloads blocked):\n"
         "  wam install-manual <modId> <fileId> <local-zip-path>\n\n"
         "Reconciliation (folders already in AddOns/ that wam didn't put there):\n"
@@ -292,6 +296,136 @@ int cmdInstallManual(int argc, char** argv) {
     return 0;
 }
 
+// Shared by 'update' and 'update-all'. Fetches the current best file for an
+// already-tracked mod, shows a diff against what's installed, and applies
+// it only after confirmation (or immediately if assumeYes) — per-mod
+// failures are caught here so update-all can keep going past one bad mod.
+int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
+                  std::optional<ReleaseChannel> channelOverride, bool assumeYes) {
+    auto store = StateStore::load();
+    auto existing = store.find(modId);
+    if (!existing.has_value()) {
+        std::cerr << "Mod " << modId << " is not tracked. Run 'wam install " << modId << "' first.\n";
+        return 1;
+    }
+    ReleaseChannel channel = channelOverride.value_or(existing->channel);
+
+    try {
+        auto client = requireClient();
+        auto mod = client.getMod(modId);
+
+        std::optional<int64_t> gvTypeId;
+        if (flavor.has_value()) {
+            gvTypeId = client.gameVersionTypeId(*flavor);
+            if (!gvTypeId.has_value()) {
+                std::cerr << mod.name << ": unknown flavor '" << *flavor << "'. Skipping.\n";
+                return 1;
+            }
+        }
+
+        auto files = client.getFiles(modId, gvTypeId);
+        auto chosen = CurseForgeClient::selectBestFile(files, channel);
+        if (!chosen.has_value()) {
+            std::cout << mod.name << ": no " << channelName(channel) << " file found"
+                      << (flavor ? " for flavor '" + *flavor + "'" : "") << ". Skipping.\n";
+            return 0;
+        }
+
+        if (chosen->id == existing->fileId) {
+            std::cout << mod.name << ": up to date (" << existing->fileName << ")\n";
+            return 0;
+        }
+
+        std::cout << mod.name << ":\n"
+                  << "  current: " << (existing->fileId == 0 ? "unknown (adopted, never pinned)" : existing->fileName) << "\n"
+                  << "  latest:  " << chosen->fileName << " (" << channelName(chosen->releaseType) << ")\n";
+
+        if (chosen->isBlocked()) {
+            std::cout << "  Third-party downloads blocked by the author — install manually:\n"
+                       << "    wam install-manual " << modId << " " << chosen->id << " <path-to-downloaded-zip>\n";
+            return 0;
+        }
+
+        if (!assumeYes) {
+            std::cout << "  Apply update? [y/N] ";
+            std::string answer;
+            std::getline(std::cin, answer);
+            if (answer != "y" && answer != "Y" && answer != "yes") {
+                std::cout << "  Skipped.\n";
+                return 0;
+            }
+        }
+
+        auto addonsDir = requireAddonsDir();
+        auto tmpZip = Config::dataDir() / "tmp" / (std::to_string(chosen->id) + "_" + chosen->fileName);
+        auto dlResp = HttpClient::downloadToFile(*chosen->downloadUrl, tmpZip);
+        if (!dlResp.ok()) {
+            std::cerr << "  Download failed (HTTP " << dlResp.status << ")\n";
+            return 1;
+        }
+
+        // Clean update: drop the old folders first so a module the new
+        // file no longer ships doesn't linger as orphaned dead weight.
+        // (SavedVariables live under WTF/, untouched by this.)
+        AddonInstaller::removeFolders(addonsDir, existing->folders);
+
+        auto folders = AddonInstaller::extractZip(tmpZip, addonsDir);
+        std::filesystem::remove(tmpZip);
+
+        InstalledAddon rec = *existing;
+        rec.fileId = chosen->id;
+        rec.fileName = chosen->fileName;
+        rec.channel = chosen->releaseType;
+        rec.gameVersions = chosen->gameVersions;
+        rec.folders = folders;
+        rec.installedAt = nowIso8601();
+        rec.manuallyProvided = false;
+
+        store.upsert(rec);
+        store.save();
+        std::cout << "  Updated.\n";
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "  Error updating mod " << modId << ": " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int cmdUpdate(int argc, char** argv) {
+    if (argc < 1) { printUsage(); return 1; }
+    int64_t modId = std::stoll(argv[0]);
+    std::optional<std::string> flavor;
+    std::optional<ReleaseChannel> channel;
+    bool assumeYes = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--flavor" && i + 1 < argc) flavor = argv[++i];
+        else if (a == "--channel" && i + 1 < argc) channel = parseChannel(argv[++i]);
+        else if (a == "--yes" || a == "-y") assumeYes = true;
+    }
+    return updateOneMod(modId, flavor, channel, assumeYes);
+}
+
+int cmdUpdateAll(int argc, char** argv) {
+    std::optional<std::string> flavor;
+    bool assumeYes = false;
+    for (int i = 0; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--flavor" && i + 1 < argc) flavor = argv[++i];
+        else if (a == "--yes" || a == "-y") assumeYes = true;
+    }
+
+    auto store = StateStore::load();
+    int failures = 0;
+    for (const auto& addon : store.all()) {
+        if (addon.modId == 0) continue; // not CurseForge-sourced (reserved for future sources)
+        if (updateOneMod(addon.modId, flavor, std::nullopt, assumeYes) != 0) ++failures;
+        std::cout << "\n";
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 int cmdList(int, char**) {
     auto store = StateStore::load();
     std::cout << store.all().size() << " addon(s) tracked:\n";
@@ -400,12 +534,40 @@ int cmdAdopt(int argc, char** argv) {
         foldersToAdopt.push_back(*folder);
     } else {
         auto entries = Reconciler::scan(addonsDir, store);
-        for (const auto& e : entries)
+        std::unordered_set<std::string> untrackedOnDisk;
+        for (const auto& e : entries) {
+            untrackedOnDisk.insert(e.folder);
             if (e.toc.curseProjectId == modId) foldersToAdopt.push_back(e.folder);
+        }
+
+        // Self-tagged folders only catch a mod's primary module. Real
+        // multi-module addons (e.g. a UI suite split into ActionBars/Bags/
+        // etc.) commonly leave every other module's .toc untagged, so also
+        // cross-check the mod's known files' moduleNames against what's
+        // sitting untracked on disk — this is the same folder list the real
+        // 'install' flow trusts, just sourced from the API instead of a
+        // fresh extraction.
+        if (auto cfg = Config::load(); cfg.curseforge_api_key.has_value()) {
+            try {
+                CurseForgeClient client(*cfg.curseforge_api_key);
+                for (const auto& f : client.getFiles(*modId)) {
+                    for (const auto& moduleName : f.moduleNames) {
+                        if (!untrackedOnDisk.count(moduleName)) continue;
+                        if (std::find(foldersToAdopt.begin(), foldersToAdopt.end(), moduleName) != foldersToAdopt.end())
+                            continue;
+                        foldersToAdopt.push_back(moduleName);
+                    }
+                }
+            } catch (const std::exception&) {
+                // Best-effort only — self-tagged folders above still adopt fine offline.
+            }
+        }
 
         if (foldersToAdopt.empty()) {
             std::cerr << "No untracked folder's .toc claims mod " << *modId
-                      << ". Use --folder <name> to assign one by hand.\n";
+                      << ", and no sibling modules were found via the API"
+                         " (check --mod-id, or configure an API key for cross-checking)."
+                         " Use --folder <name> to assign one by hand.\n";
             return 1;
         }
     }
@@ -445,8 +607,8 @@ int cmdAdopt(int argc, char** argv) {
     for (const auto& f : foldersToAdopt) std::cout << "  " << f << "\n";
     if (rec.fileId == 0) {
         std::cout << "File/version unknown (adopted from .toc, not a download) — "
-                     "run 'wam files " << rec.modId << "' to see what's current, "
-                     "or a future update command will offer to pin it.\n";
+                     "run 'wam update " << rec.modId << "' to pin it to a real CurseForge file"
+                     "(requires an API key).\n";
     }
     return 0;
 }
@@ -463,6 +625,8 @@ int main(int argc, char** argv) {
         if (cmd == "flavors") return cmdFlavors(argc - 2, argv + 2);
         if (cmd == "files") return cmdFiles(argc - 2, argv + 2);
         if (cmd == "install") return cmdInstall(argc - 2, argv + 2);
+        if (cmd == "update") return cmdUpdate(argc - 2, argv + 2);
+        if (cmd == "update-all") return cmdUpdateAll(argc - 2, argv + 2);
         if (cmd == "install-manual") return cmdInstallManual(argc - 2, argv + 2);
         if (cmd == "scan") return cmdScan(argc - 2, argv + 2);
         if (cmd == "adopt") return cmdAdopt(argc - 2, argv + 2);
