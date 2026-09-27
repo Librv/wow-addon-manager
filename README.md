@@ -1,7 +1,9 @@
-# wow-addon-manager — milestone 1
+# wow-addon-manager — milestone 2
 
-Core engine + CurseForge source + manual folder-pointing for blocked
-downloads. No UI yet — everything is verified through the `wam` CLI.
+Milestone 1's core engine + CurseForge source + manual folder-pointing for
+blocked downloads, plus milestone 2's reconciliation of addons that were
+already sitting in `AddOns/` before `wam` existed. No UI yet — everything is
+verified through the `wam` CLI.
 
 ## Build
 
@@ -69,6 +71,17 @@ Installed-addon state lives at
 
 # remove an addon (deletes its folders + drops it from state)
 ./build/wam remove <modId>
+
+# find folders in AddOns/ that wam doesn't track yet, grouped by whatever
+# CurseForge mod id their .toc claims (X-Curse-Project-ID)
+./build/wam scan
+
+# adopt every untracked folder tagged for a given mod in one go
+./build/wam adopt --mod-id <modId>
+
+# manually assign one folder (e.g. no X-Curse-Project-ID tag was found,
+# or you know better than the tag) to a mod id
+./build/wam adopt --folder <folderName> --mod-id <modId>
 ```
 
 `--flavor` matches case-insensitively against CurseForge's own flavor names
@@ -96,9 +109,21 @@ Does:
 - Zip extraction is zip-slip-safe and reports back exactly which top-level
   AddOns folders a given install owns, for later removal/updates
 - Local state (`installed.json`) is independent of the game folder itself
+- **Reconciling addons that were already installed before `wam` existed.**
+  Each top-level `AddOns/` folder is checked against its own `.toc` file(s)
+  for a `## X-Curse-Project-ID:` line — the id an addon's packaging tool
+  (e.g. the BigWigsMods packager) stamps in at release time, the same
+  heuristic tools like WowUp use for this. `scan` reports what it finds,
+  grouped by mod id (a mod can own several top-level folders); `adopt`
+  commits a match — or a manual override — into `installed.json`. Note this
+  identifies *which mod*, not *which exact file/version*: there's no
+  per-version tag in the `.toc`, so an adopted addon is recorded with
+  `fileId = 0` ("unknown") until a future update pins it to a real
+  CurseForge file. A folder with no tag at all (hand-written addons, or
+  ones from a source other than CurseForge) needs `--folder ... --mod-id
+  ...` to assign by hand.
 
 Does not yet do (later phases per the agreed plan):
-- Reconciling already-installed addons via fingerprint matching (phase 2)
 - Any UI (phase 3) — this is CLI-only by design for this milestone
 - Addon profiles (phase 4), multi-flavor support (phase 5), GitHub/Wago
   sources (phase 6), or WoW auto-detection (phase 7)

@@ -7,6 +7,8 @@
 #include "core/state_store.hpp"
 #include "core/curseforge_client.hpp"
 #include "core/config.hpp"
+#include "core/toc_reader.hpp"
+#include "core/reconciler.hpp"
 
 #include <zip.h>
 #include <iostream>
@@ -14,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 
 using namespace wam;
 namespace fs = std::filesystem;
@@ -180,6 +183,80 @@ void testNoApiKeyStillUsable(const fs::path& workDir) {
           "addonsDir() resolves correctly with no API key set");
 }
 
+void testTocReader(const fs::path& workDir) {
+    auto folder = workDir / "AddOns" / "DBM-Core";
+    fs::create_directories(folder);
+
+    std::ofstream toc(folder / "DBM-Core.toc");
+    toc << "## Interface: 110002\n"
+           "## Title: Deadly Boss Mods\n"
+           "## Version: 10.2.5\n"
+           "## X-Curse-Project-ID: 3358\n"
+           "## X-WoWI-ID: 6366\n";
+    toc.close();
+
+    auto meta = TocReader::readFolder(folder);
+    check(meta.curseProjectId.has_value() && *meta.curseProjectId == 3358,
+          "TocReader parses X-Curse-Project-ID");
+    check(meta.wowiId.has_value() && *meta.wowiId == "6366", "TocReader parses X-WoWI-ID");
+    check(meta.title.has_value() && *meta.title == "Deadly Boss Mods", "TocReader parses Title");
+    check(meta.version.has_value() && *meta.version == "10.2.5", "TocReader parses Version");
+
+    auto untagged = workDir / "AddOns" / "NoTagAddon";
+    fs::create_directories(untagged);
+    std::ofstream toc2(untagged / "NoTagAddon.toc");
+    toc2 << "## Interface: 110002\n## Title: No Tag Addon\n";
+    toc2.close();
+
+    auto meta2 = TocReader::readFolder(untagged);
+    check(!meta2.curseProjectId.has_value(), "TocReader leaves curseProjectId unset when absent");
+    check(meta2.title.has_value() && *meta2.title == "No Tag Addon", "TocReader still reads Title without the tag");
+
+    auto empty = workDir / "AddOns" / "JunkNoToc";
+    fs::create_directories(empty);
+    std::ofstream(empty / "readme.txt") << "not a toc\n";
+    auto meta3 = TocReader::readFolder(empty);
+    check(meta3.empty(), "TocReader returns empty metadata for a folder with no .toc file");
+}
+
+void testReconciler(const fs::path& workDir) {
+    auto addonsDir = workDir / "ReconcileAddOns";
+    fs::remove_all(addonsDir);
+
+    auto write = [&](const std::string& folder, const std::string& tocBody) {
+        auto dir = addonsDir / folder;
+        fs::create_directories(dir);
+        std::ofstream(dir / (folder + ".toc")) << tocBody;
+    };
+
+    write("DBM-Core", "## X-Curse-Project-ID: 3358\n");
+    write("DBM-StatusBarTimers", "## X-Curse-Project-ID: 3358\n");
+    write("UntaggedAddon", "## Title: No tag here\n");
+    write("AlreadyTracked", "## X-Curse-Project-ID: 99999\n");
+
+    StateStore state; // empty in-memory store (not loaded from disk)
+    InstalledAddon tracked;
+    tracked.modId = 99999;
+    tracked.folders = {"AlreadyTracked"};
+    state.upsert(tracked);
+
+    auto entries = Reconciler::scan(addonsDir, state);
+    check(entries.size() == 3, "scan skips folders already covered by state");
+
+    auto groups = Reconciler::groupByModId(entries);
+    check(groups.size() == 2, "groupByModId groups DBM's two folders under one mod id");
+
+    auto dbmGroup = std::find_if(groups.begin(), groups.end(),
+        [](const auto& g) { return g.first == 3358; });
+    check(dbmGroup != groups.end() && dbmGroup->second.size() == 2,
+          "the mod-3358 group contains both DBM folders");
+
+    auto untaggedGroup = std::find_if(groups.begin(), groups.end(),
+        [](const auto& g) { return g.first == 0; });
+    check(untaggedGroup != groups.end() && untaggedGroup->second.size() == 1,
+          "untagged folders are grouped under key 0");
+}
+
 } // namespace
 
 int main() {
@@ -192,6 +269,8 @@ int main() {
     testStateStoreRoundtrip(workDir);
     testSelectBestFile();
     testNoApiKeyStillUsable(workDir);
+    testTocReader(workDir);
+    testReconciler(workDir);
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     fs::remove_all(workDir);
