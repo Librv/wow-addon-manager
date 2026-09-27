@@ -40,7 +40,8 @@ void printUsage() {
         "  wam adopt --folder <name> --mod-id <id>         (manually assign one folder, e.g. no .toc tag found)\n\n"
         "Local state:\n"
         "  wam list\n"
-        "  wam remove <modId>\n";
+        "  wam remove <modId>              (delete tracked folders from disk + drop from state)\n"
+        "  wam untrack <modId>             (drop from state only — files untouched, for re-scanning)\n";
 }
 
 ReleaseChannel parseChannel(const std::string& s) {
@@ -464,6 +465,31 @@ int cmdRemove(int argc, char** argv) {
     return 0;
 }
 
+int cmdUntrack(int argc, char** argv) {
+    if (argc < 1) { printUsage(); return 1; }
+    int64_t modId = std::stoll(argv[0]);
+
+    auto store = StateStore::load();
+    auto found = store.find(modId);
+    if (!found.has_value()) {
+        std::cerr << "No tracked addon with mod id " << modId << "\n";
+        return 1;
+    }
+
+    // Deliberately does NOT touch the AddOns folder — the point is to drop
+    // wam's own bookkeeping only, e.g. to re-run 'wam scan'/'adopt' from a
+    // clean slate without having to delete real files off disk.
+    store.remove(modId);
+    store.save();
+
+    std::cout << "Untracked " << found->displayName << " (mod " << modId << "). "
+                 "Files left in place — folders: ";
+    for (size_t i = 0; i < found->folders.size(); ++i)
+        std::cout << found->folders[i] << (i + 1 < found->folders.size() ? ", " : "");
+    std::cout << "\n";
+    return 0;
+}
+
 int cmdScan(int, char**) {
     auto addonsDir = requireAddonsDir();
     auto store = StateStore::load();
@@ -632,6 +658,7 @@ int main(int argc, char** argv) {
         if (cmd == "adopt") return cmdAdopt(argc - 2, argv + 2);
         if (cmd == "list") return cmdList(argc - 2, argv + 2);
         if (cmd == "remove") return cmdRemove(argc - 2, argv + 2);
+        if (cmd == "untrack") return cmdUntrack(argc - 2, argv + 2);
         printUsage();
         return 1;
     } catch (const std::exception& e) {
