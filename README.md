@@ -72,6 +72,10 @@ Installed-addon state lives at
 # remove an addon (deletes its folders + drops it from state)
 ./build/wam remove <modId>
 
+# drop an addon from state WITHOUT touching its files — for re-running
+# scan/adopt from a clean slate during debugging
+./build/wam untrack <modId>
+
 # update a tracked addon (shows current vs. latest, asks before applying)
 ./build/wam update <modId> --flavor Retail
 ./build/wam update <modId> --yes             # skip the confirmation prompt
