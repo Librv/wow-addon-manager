@@ -21,6 +21,8 @@ add_library(wam_core
     src/core/curseforge_client.cpp
     src/core/addon_installer.cpp
     src/core/state_store.cpp
+    src/core/toc_reader.cpp
+    src/core/reconciler.cpp
 )
 target_include_directories(wam_core PUBLIC src)
 target_link_libraries(wam_core PUBLIC CURL::libcurl nlohmann_json::nlohmann_json PkgConfig::LIBZIP OpenSSL::Crypto)

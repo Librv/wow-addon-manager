@@ -3,10 +3,13 @@
 #include "core/addon_installer.hpp"
 #include "core/state_store.hpp"
 #include "core/http_client.hpp"
+#include "core/toc_reader.hpp"
+#include "core/reconciler.hpp"
 
 #include <iostream>
 #include <sstream>
 #include <optional>
+#include <algorithm>
 #include <cstdlib>
 
 using namespace wam;
@@ -27,6 +30,10 @@ void printUsage() {
         "  wam install <modId> [--channel release|beta|alpha] [--flavor <name>]\n\n"
         "Manual install (for addons with third-party downloads blocked):\n"
         "  wam install-manual <modId> <fileId> <local-zip-path>\n\n"
+        "Reconciliation (folders already in AddOns/ that wam didn't put there):\n"
+        "  wam scan                                        (report untracked folders + .toc-detected mod ids)\n"
+        "  wam adopt --mod-id <id>                         (adopt all untracked folders tagged for that mod)\n"
+        "  wam adopt --folder <name> --mod-id <id>         (manually assign one folder, e.g. no .toc tag found)\n\n"
         "Local state:\n"
         "  wam list\n"
         "  wam remove <modId>\n";
@@ -323,6 +330,127 @@ int cmdRemove(int argc, char** argv) {
     return 0;
 }
 
+int cmdScan(int, char**) {
+    auto addonsDir = requireAddonsDir();
+    auto store = StateStore::load();
+    auto entries = Reconciler::scan(addonsDir, store);
+
+    if (entries.empty()) {
+        std::cout << "No untracked folders in " << addonsDir << "\n";
+        return 0;
+    }
+
+    auto groups = Reconciler::groupByModId(entries);
+    std::cout << entries.size() << " untracked folder(s) in " << addonsDir << ":\n\n";
+    for (const auto& group : groups) {
+        int64_t modId = group.first;
+        if (modId != 0) {
+            std::cout << "  Mod " << modId << " (from .toc X-Curse-Project-ID) — "
+                      << group.second.size() << " folder(s):\n";
+        } else {
+            std::cout << "  No X-Curse-Project-ID found — " << group.second.size() << " folder(s):\n";
+        }
+        for (const auto& e : group.second) {
+            std::cout << "    " << e.folder;
+            if (e.toc.title) std::cout << " (" << *e.toc.title << ")";
+            if (e.toc.version) std::cout << " v" << *e.toc.version;
+            std::cout << "\n";
+        }
+    }
+
+    std::cout << "\nTo adopt:\n"
+                 "  wam adopt --mod-id <id>\n"
+                 "  wam adopt --folder <name> --mod-id <id>\n";
+    return 0;
+}
+
+int cmdAdopt(int argc, char** argv) {
+    std::optional<int64_t> modId;
+    std::optional<std::string> folder;
+    for (int i = 0; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--mod-id" && i + 1 < argc) modId = std::stoll(argv[++i]);
+        else if (a == "--folder" && i + 1 < argc) folder = argv[++i];
+    }
+    if (!modId.has_value()) {
+        std::cerr << "wam adopt requires --mod-id <id> (see: wam scan)\n";
+        return 1;
+    }
+
+    auto addonsDir = requireAddonsDir();
+    auto store = StateStore::load();
+    std::vector<std::string> foldersToAdopt;
+
+    if (folder.has_value()) {
+        if (!std::filesystem::exists(addonsDir / *folder)) {
+            std::cerr << "No such folder in AddOns: " << *folder << "\n";
+            return 1;
+        }
+        // Refuse to silently move a folder that's already owned by a
+        // different tracked addon — ask for an explicit remove first.
+        for (const auto& a : store.all()) {
+            if (a.modId == *modId) continue;
+            if (std::find(a.folders.begin(), a.folders.end(), *folder) != a.folders.end()) {
+                std::cerr << "'" << *folder << "' is already tracked under mod " << a.modId
+                          << " (" << a.displayName << "). Run 'wam remove " << a.modId
+                          << "' first if this is wrong.\n";
+                return 1;
+            }
+        }
+        foldersToAdopt.push_back(*folder);
+    } else {
+        auto entries = Reconciler::scan(addonsDir, store);
+        for (const auto& e : entries)
+            if (e.toc.curseProjectId == modId) foldersToAdopt.push_back(e.folder);
+
+        if (foldersToAdopt.empty()) {
+            std::cerr << "No untracked folder's .toc claims mod " << *modId
+                      << ". Use --folder <name> to assign one by hand.\n";
+            return 1;
+        }
+    }
+
+    // Best-effort metadata only; adoption itself must work with no API key
+    // or network — it's fundamentally a local-.toc operation, same
+    // constraint install-manual already holds to.
+    std::string displayName = "mod " + std::to_string(*modId);
+    try {
+        auto cfg = Config::load();
+        if (cfg.curseforge_api_key.has_value()) {
+            CurseForgeClient client(*cfg.curseforge_api_key);
+            displayName = client.getMod(*modId).name;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "(note: could not fetch mod name, proceeding with a placeholder: " << e.what() << ")\n";
+    }
+
+    auto existing = store.find(*modId);
+    InstalledAddon rec = existing.value_or(InstalledAddon{});
+    if (!existing.has_value()) {
+        rec.modId = *modId;
+        rec.fileId = 0; // unknown version — this came from a .toc tag, not a download
+        rec.displayName = displayName;
+        rec.channel = ReleaseChannel::Release;
+        rec.installedAt = nowIso8601();
+        rec.manuallyProvided = false;
+    }
+    for (const auto& f : foldersToAdopt)
+        if (std::find(rec.folders.begin(), rec.folders.end(), f) == rec.folders.end())
+            rec.folders.push_back(f);
+
+    store.upsert(rec);
+    store.save();
+
+    std::cout << "Adopted " << rec.displayName << " (mod " << rec.modId << "):\n";
+    for (const auto& f : foldersToAdopt) std::cout << "  " << f << "\n";
+    if (rec.fileId == 0) {
+        std::cout << "File/version unknown (adopted from .toc, not a download) — "
+                     "run 'wam files " << rec.modId << "' to see what's current, "
+                     "or a future update command will offer to pin it.\n";
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -336,6 +464,8 @@ int main(int argc, char** argv) {
         if (cmd == "files") return cmdFiles(argc - 2, argv + 2);
         if (cmd == "install") return cmdInstall(argc - 2, argv + 2);
         if (cmd == "install-manual") return cmdInstallManual(argc - 2, argv + 2);
+        if (cmd == "scan") return cmdScan(argc - 2, argv + 2);
+        if (cmd == "adopt") return cmdAdopt(argc - 2, argv + 2);
         if (cmd == "list") return cmdList(argc - 2, argv + 2);
         if (cmd == "remove") return cmdRemove(argc - 2, argv + 2);
         printUsage();
