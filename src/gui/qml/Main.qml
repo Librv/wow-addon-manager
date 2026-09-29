@@ -45,6 +45,7 @@ Kirigami.ApplicationWindow {
             showPassiveNotification(qsTr("Checking for updates…"))
         }
     }
+    function reviewUpdates() { updatesDialog.open() }
     function pickZip(modId, fileId) {
         manualTarget = { modId: modId, fileId: fileId }
         zipDialog.open()
@@ -62,7 +63,7 @@ Kirigami.ApplicationWindow {
         collapsed: false
         actions: [
             Kirigami.PagePoolAction {
-                text: qsTr("Installed"); icon.name: "view-list-details"
+                text: qsTr("AddOns"); icon.name: "view-list-details"
                 pagePool: mainPagePool; page: Qt.resolvedUrl("InstalledPage.qml")
             },
             Kirigami.PagePoolAction {
@@ -76,19 +77,6 @@ Kirigami.ApplicationWindow {
             Kirigami.PagePoolAction {
                 text: qsTr("Settings"); icon.name: "configure"
                 pagePool: mainPagePool; page: Qt.resolvedUrl("SettingsPage.qml")
-            },
-            Kirigami.Action { separator: true },
-            Kirigami.Action {
-                text: qsTr("Check for updates")
-                icon.name: "view-refresh"
-                enabled: wam.hasApiKey && !wam.checkingUpdates
-                onTriggered: root.checkUpdates()
-            },
-            Kirigami.Action {
-                visible: wam.pendingUpdates.count > 0
-                text: qsTr("Review updates (%1)").arg(wam.pendingUpdates.count)
-                icon.name: "update-none"
-                onTriggered: updatesDialog.open()
             }
         ]
     }
