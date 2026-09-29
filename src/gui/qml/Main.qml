@@ -37,7 +37,7 @@ Kirigami.ApplicationWindow {
         const page = showPage("SearchPage.qml")
         if (query) page.runQuery(query)
     }
-    function showScan() { showPage("ScanPage.qml") }
+    function openScan() { scanDialog.open() }
     function showSettings() { showPage("SettingsPage.qml") }
     function checkUpdates() {
         if (!wam.checkingUpdates) {
@@ -71,10 +71,6 @@ Kirigami.ApplicationWindow {
                 pagePool: mainPagePool; page: Qt.resolvedUrl("SearchPage.qml")
             },
             Kirigami.PagePoolAction {
-                text: qsTr("Existing addons"); icon.name: "folder-search"
-                pagePool: mainPagePool; page: Qt.resolvedUrl("ScanPage.qml")
-            },
-            Kirigami.PagePoolAction {
                 text: qsTr("Settings"); icon.name: "configure"
                 pagePool: mainPagePool; page: Qt.resolvedUrl("SettingsPage.qml")
             }
@@ -96,6 +92,12 @@ Kirigami.ApplicationWindow {
             if (available > 0) updatesDialog.open()
             else root.showPassiveNotification(qsTr("All addons are up to date"))
         }
+    }
+
+    ScanDialog {
+        id: scanDialog
+        onSearchRequested: (query) => root.showSearch(query)
+        onSettingsRequested: root.showSettings()
     }
 
     UpdatesDialog {
