@@ -41,6 +41,10 @@ Config Config::load() {
         cfg.curseforge_api_key = j.at("curseforge_api_key").get<std::string>();
     if (j.contains("wow_path") && !j["wow_path"].is_null())
         cfg.wow_path = j.at("wow_path").get<std::string>();
+    if (j.contains("wow_flavor_id") && j.at("wow_flavor_id").is_number_integer())
+        cfg.wow_flavor_id = j.at("wow_flavor_id").get<int64_t>();
+    if (j.contains("wow_flavor_name") && j.at("wow_flavor_name").is_string())
+        cfg.wow_flavor_name = j.at("wow_flavor_name").get<std::string>();
 
     return cfg;
 }
@@ -52,9 +56,18 @@ void Config::save() const {
     json j;
     j["curseforge_api_key"] = curseforge_api_key.has_value() ? json(*curseforge_api_key) : json(nullptr);
     j["wow_path"] = wow_path.has_value() ? json(*wow_path) : json(nullptr);
+    j["wow_flavor_id"] = wow_flavor_id.has_value() ? json(*wow_flavor_id) : json(nullptr);
+    j["wow_flavor_name"] = wow_flavor_name.has_value() ? json(*wow_flavor_name) : json(nullptr);
 
     std::ofstream out(path);
     out << j.dump(2) << "\n";
+}
+
+std::string Config::wowFolderName() const {
+    if (!wow_path.has_value()) return {};
+    auto p = fs::path(*wow_path).lexically_normal();
+    if (p.filename().empty()) p = p.parent_path(); // "/a/_retail_/" has an empty filename
+    return p.filename().string();
 }
 
 fs::path Config::addonsDir() const {
