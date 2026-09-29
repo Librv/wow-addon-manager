@@ -34,11 +34,43 @@ Kirigami.ScrollablePage {
             }
         }
 
+        RowLayout {
+            Kirigami.FormData.label: qsTr("Flavor:")
+            QQC2.ComboBox {
+                id: flavorBox
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 20
+                // Greyed out until there is a folder to describe (and a flavor list to choose from).
+                enabled: wam.hasWowPath && wam.flavors.length > 0
+                model: wam.flavors
+                textRole: "name"
+                valueRole: "id"
+                displayText: currentIndex >= 0 ? currentText
+                           : !wam.hasWowPath ? qsTr("Set the WoW folder first")
+                           : !wam.hasApiKey ? qsTr("Add an API key to detect it")
+                           : qsTr("Not detected: pick one")
+
+                function indexOfFlavor() {
+                    const f = wam.flavors
+                    for (let i = 0; i < f.length; ++i)
+                        if (f[i].id === wam.wowFlavorId) return i
+                    return -1
+                }
+                // The user's own pick breaks a plain currentIndex binding, so follow the config explicitly.
+                currentIndex: indexOfFlavor()
+                onCountChanged: currentIndex = indexOfFlavor()
+                onActivated: wam.setWowFlavor(currentValue)
+                Connections {
+                    target: wam
+                    function onConfigChanged() { flavorBox.currentIndex = flavorBox.indexOfFlavor() }
+                }
+            }
+        }
+
         QQC2.Label {
             Layout.maximumWidth: Kirigami.Units.gridUnit * 28
             wrapMode: Text.WordWrap
             opacity: 0.7
-            text: qsTr("Point this at the game flavor folder, for example …/World of Warcraft/_retail_. Addons are installed to Interface/AddOns inside it.")
+            text: qsTr("Point this at the game flavor folder, for example …/World of Warcraft/_retail_. Addons are installed to Interface/AddOns inside it. The flavor is worked out from the folder name when you save the path (it needs your API key); pick it here if it could not be worked out. It is the default when installing, and you can still choose another flavor for a single addon in the install window.")
         }
     }
 
