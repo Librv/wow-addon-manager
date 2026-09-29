@@ -1,5 +1,6 @@
 #include "core/reconciler.hpp"
 #include <algorithm>
+#include <stdexcept>
 #include <unordered_set>
 
 namespace wam {
@@ -20,6 +21,7 @@ std::vector<ScanEntry> Reconciler::scan(const fs::path& addonsDir, const StateSt
         if (ec) break;
         if (!entry.is_directory()) continue;
         std::string name = entry.path().filename().string();
+        if (name.rfind(".wam-", 0) == 0) continue; // wam's own staging/backup folders
         if (tracked.count(name)) continue;
 
         ScanEntry se;
@@ -52,6 +54,50 @@ std::vector<std::pair<int64_t, std::vector<ScanEntry>>> Reconciler::groupByModId
             return a.first < b.first;
         });
     return groups;
+}
+
+InstalledAddon Reconciler::adopt(StateStore& state, const fs::path& addonsDir, int64_t modId,
+                                 const std::string& displayName, const std::string& iconUrl,
+                                 const std::vector<std::string>& folders) {
+    if (modId <= 0) throw std::runtime_error("invalid mod id " + std::to_string(modId));
+    if (folders.empty()) throw std::runtime_error("no folders to adopt");
+
+    for (const auto& f : folders) {
+        if (f.empty() || f == "." || f.find("..") != std::string::npos ||
+            f.find('/') != std::string::npos || f.find('\\') != std::string::npos ||
+            f.rfind(".wam-", 0) == 0)
+            throw std::runtime_error("not a plain AddOns folder name: '" + f + "'");
+
+        std::error_code ec;
+        if (!fs::is_directory(addonsDir / f, ec))
+            throw std::runtime_error("no such folder in AddOns: " + f);
+
+        // Never silently move a folder that another tracked addon already owns.
+        for (const auto& a : state.all()) {
+            if (a.modId == modId) continue;
+            if (std::find(a.folders.begin(), a.folders.end(), f) != a.folders.end())
+                throw std::runtime_error("'" + f + "' is already tracked under mod " +
+                                         std::to_string(a.modId) + " (" + a.displayName + ")");
+        }
+    }
+
+    auto existing = state.find(modId);
+    InstalledAddon rec = existing.value_or(InstalledAddon{});
+    if (!existing.has_value()) {
+        rec.modId = modId;
+        rec.fileId = 0; // unknown version: this came from a .toc tag, not a download
+        rec.displayName = displayName;
+        rec.channel = ReleaseChannel::Release;
+        rec.installedAt = nowIso8601();
+        rec.manuallyProvided = false;
+    }
+    if (rec.iconUrl.empty()) rec.iconUrl = iconUrl;
+    for (const auto& f : folders)
+        if (std::find(rec.folders.begin(), rec.folders.end(), f) == rec.folders.end())
+            rec.folders.push_back(f);
+
+    state.upsert(rec);
+    return rec;
 }
 
 } // namespace wam

@@ -57,6 +57,40 @@ HttpResponse HttpClient::get(const std::string& url, const std::vector<std::stri
     return resp;
 }
 
+HttpResponse HttpClient::post(const std::string& url, const std::string& body,
+                               const std::vector<std::string>& headers) {
+    CURL* curl = curl_easy_init();
+    if (!curl) throw std::runtime_error("failed to init curl handle");
+
+    HttpResponse resp;
+    curl_slist* hdrs = buildHeaders(headers);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "wow-addon-manager/0.1");
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK) {
+        long code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        resp.status = code;
+    } else {
+        resp.status = 0;
+        resp.body = curl_easy_strerror(res);
+    }
+
+    curl_slist_free_all(hdrs);
+    curl_easy_cleanup(curl);
+    return resp;
+}
+
 HttpResponse HttpClient::downloadToFile(const std::string& url,
                                          const std::filesystem::path& destPath,
                                          const std::vector<std::string>& headers) {

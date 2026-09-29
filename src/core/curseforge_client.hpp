@@ -16,6 +16,11 @@ struct CurseForgeMod {
     std::string slug;
     std::string summary;
     std::string websiteUrl;
+    // Flavors (gameVersionTypeIds) this mod has files for, taken from the
+    // mod's latestFilesIndexes. Lets a UI offer only flavors that exist.
+    std::vector<int64_t> gameVersionTypeIds;
+    // Addon icon: the mod's logo thumbnail URL (empty if it has none).
+    std::string logoUrl;
 };
 
 struct CurseForgeFile {
@@ -24,7 +29,7 @@ struct CurseForgeFile {
     std::string displayName;
     std::string fileName;
     ReleaseChannel releaseType = ReleaseChannel::Release;
-    std::vector<std::string> gameVersions; // actual client version strings, e.g. "11.0.5" — NOT flavor names
+    std::vector<std::string> gameVersions; // actual client version strings, e.g. "11.0.5", NOT flavor names
     std::optional<std::string> downloadUrl; // nullopt => author blocked third-party downloads
     int64_t fileFingerprint = 0;
     std::vector<std::string> moduleNames; // top-level folders this file writes into AddOns/
@@ -42,7 +47,7 @@ struct GameVersionType {
 };
 
 // Thin client around the public CurseForge API (https://api.curseforge.com/v1).
-// Every call can fail (network, auth, rate limit) — callers must handle
+// Every call can fail (network, auth, rate limit); callers must handle
 // CurseForgeError; the rest of the app must keep working with no key at all.
 class CurseForgeClient {
 public:
@@ -51,19 +56,28 @@ public:
     std::vector<CurseForgeMod> search(const std::string& query, int pageSize = 20);
     CurseForgeMod getMod(int64_t modId);
 
+    // Several mods in one request (POST /v1/mods). Order is not guaranteed
+    // and unknown ids are simply absent from the result.
+    std::vector<CurseForgeMod> getMods(const std::vector<int64_t>& modIds);
+
     // gameVersionTypeId, if given, is passed straight to the API's own
-    // filter (server-side, authoritative) — see gameVersionTypeId() below
+    // filter (server-side, authoritative). See gameVersionTypeId() below
     // for turning a flavor name like "Retail" into this id.
     std::vector<CurseForgeFile> getFiles(int64_t modId, std::optional<int64_t> gameVersionTypeId = std::nullopt);
     CurseForgeFile getFile(int64_t modId, int64_t fileId);
 
-    // Resolves a flavor name/substring (case-insensitive: "retail", "Retail",
+    // Resolves a flavor name/slug (case-insensitive: "retail", "Retail",
     // "classic era", ...) to CurseForge's numeric gameVersionTypeId for WoW,
     // by discovering the live list from GET /v1/games/1/version-types and
-    // caching it. Returns nullopt if nothing matches or discovery fails.
+    // caching it. An exact name/slug match wins over a substring match.
+    // Returns nullopt if nothing matches or discovery fails.
     std::optional<int64_t> gameVersionTypeId(const std::string& flavorSubstring);
 
-    // Lists every flavor CurseForge currently knows about for WoW — useful
+    // The matching rule above, on an already-fetched list (pure, testable).
+    static std::optional<int64_t> matchFlavor(const std::vector<GameVersionType>& types,
+                                               const std::string& flavorSubstring);
+
+    // Lists every flavor CurseForge currently knows about for WoW, useful
     // for telling the user what's valid when their --flavor doesn't match.
     std::vector<GameVersionType> listGameVersionTypes();
 
@@ -73,6 +87,11 @@ public:
     static std::optional<CurseForgeFile> selectBestFile(
         const std::vector<CurseForgeFile>& files,
         ReleaseChannel channel);
+
+    // Response-body parsers, exposed so they can be tested without network.
+    // parseModList: {"data":[mod,...]}   parseModObject: {"data":mod}
+    static std::vector<CurseForgeMod> parseModList(const std::string& jsonBody);
+    static CurseForgeMod parseModObject(const std::string& jsonBody);
 
     static const int64_t kWowGameId = 1;
 

@@ -26,6 +26,9 @@ json toJson(const InstalledAddon& a) {
         {"folders", a.folders},
         {"installedAt", a.installedAt},
         {"manuallyProvided", a.manuallyProvided},
+        {"flavorTypeId", a.flavorTypeId},
+        {"flavorName", a.flavorName},
+        {"iconUrl", a.iconUrl},
     };
 }
 
@@ -42,6 +45,10 @@ InstalledAddon fromJson(const json& j) {
         a.folders = j.at("folders").get<std::vector<std::string>>();
     a.installedAt = j.value("installedAt", "");
     a.manuallyProvided = j.value("manuallyProvided", false);
+    // Absent in files written before flavors were tracked: loads as unknown.
+    a.flavorTypeId = j.value("flavorTypeId", int64_t{0});
+    a.flavorName = j.value("flavorName", "");
+    a.iconUrl = j.value("iconUrl", "");
     return a;
 }
 
