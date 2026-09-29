@@ -8,6 +8,7 @@
 #include "gui/installed_addons_model.hpp"
 #include "gui/scan_results_model.hpp"
 #include "gui/toc_text.hpp"
+#include "gui/install_files_model.hpp"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -113,6 +114,77 @@ void testCleanTocText() {
     check(cleanTocText("Plain Title") == "Plain Title", "cleanTocText leaves plain text alone");
 }
 
+InstallFile makeFile(qint64 id, const char* channel) {
+    InstallFile f;
+    f.fileId = id;
+    f.displayName = QString("v%1").arg(id);
+    f.channel = channel;
+    return f;
+}
+
+void testInstallFilesModel() {
+    InstallFilesModel m;
+    check(!m.loading() && !m.loaded() && m.rowCount() == 0, "a fresh install-files model is idle and empty");
+
+    m.begin(7, 517);
+    check(m.loading() && m.matches(7, 517) && !m.matches(7, 999) && !m.matches(8, 517),
+          "begin() marks the model as loading for exactly one addon and flavor");
+
+    // Ten files, newest id first once sorted: ids 110..101; releases are every id except 103, 105, 107, 109.
+    QList<InstallFile> files;
+    for (qint64 id = 101; id <= 110; ++id) files.push_back(makeFile(id, (id % 2 == 1 && id > 102) ? "beta" : "release"));
+    m.append(files, 0, 10);
+    check(m.loaded() && !m.loading(), "append() ends the loading state");
+    check(m.rowCount() == 5, "only the first five versions are shown");
+    check(m.fileIdAt(0) == 110 && m.fileIdAt(1) == 108, "versions are sorted newest first and filtered to the release channel");
+    check(m.filteredCount() == 6, "filteredCount counts every loaded version in the channel");
+    check(m.hasMore(), "hasMore is true while loaded versions are hidden");
+
+    m.showMore();
+    check(m.rowCount() == 6 && !m.hasMore(), "showMore() reveals the rest and hasMore turns false when nothing is left");
+
+    m.setChannel("beta");
+    check(m.rowCount() == 4 && m.fileIdAt(0) == 109, "switching channel shows that channel's versions");
+    m.setChannel("alpha");
+    check(m.rowCount() == 0 && m.loaded() && m.error().isEmpty(), "a channel with no versions is an empty list, not an error");
+
+    // Paging: the server has more than was fetched.
+    InstallFilesModel p;
+    p.begin(1, 2);
+    p.append({makeFile(50, "release"), makeFile(49, "beta")}, 0, 6);
+    check(p.nextIndex() == 2 && p.hasMore(), "nextIndex follows the pages received and hasMore reflects the server");
+    check(p.wantsFetch(), "a short window with more on the server asks for another page");
+    p.setLoading(true);
+    check(!p.wantsFetch(), "no second fetch is requested while one is in flight");
+    p.append({makeFile(50, "release"), makeFile(48, "release")}, 2, 6); // 50 again: must not duplicate
+    check(p.nextIndex() == 4 && p.filteredCount() == 2, "a repeated file is not listed twice");
+    p.append({makeFile(47, "release"), makeFile(46, "release")}, 4, 6);
+    check(p.nextIndex() == 6 && !p.hasMore(), "the last page clears the server-has-more flag");
+
+    p.fail("boom");
+    check(!p.loading() && p.error() == "boom", "fail() records the error and stops loading");
+    p.clear();
+    check(p.rowCount() == 0 && !p.loaded() && p.error().isEmpty() && !p.matches(1, 2), "clear() forgets everything");
+}
+
+void testInstallFileFromCurseForge() {
+    CurseForgeFile f;
+    f.id = 9006004; f.displayName = "v9.3.2"; f.fileName = "EllesmereUI-v9.3.2.zip";
+    f.releaseType = ReleaseChannel::Release;
+    f.gameVersions = {"12.1.0", "12.0.7", "12.0.5"};
+    f.fileDate = "2026-09-29T14:03:11.5Z";
+    f.downloadUrl = "https://example/dl";
+    auto r = InstallFile::fromCurseForge(f);
+    check(r.displayName == "v9.3.2" && r.channel == "release" && !r.blocked, "an InstallFile carries name, channel and blocked state");
+    check(r.gameVersions == "12.1.0 +2", "game versions are summarised as the first plus a count");
+    check(r.date == "Sep 29, 2026", "the upload date is formatted like CurseForge's site");
+
+    f.displayName.clear(); f.fileDate = "not a date"; f.downloadUrl.reset(); f.releaseType = ReleaseChannel::Alpha;
+    auto r2 = InstallFile::fromCurseForge(f);
+    check(r2.displayName == "EllesmereUI-v9.3.2.zip" && r2.date.isEmpty() && r2.blocked && r2.channel == "alpha",
+          "a missing display name falls back to the file name, and a bad date to empty");
+}
+
 void testSearchResultsModel() {
     SearchResultsModel m;
     CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo";
@@ -179,6 +251,7 @@ void testControllerEndToEnd() {
                                         InstalledAddonsModel::FlavorNameRole).toString() == "Retail",
               "the stored flavor survives the cross-thread round trip");
         check(!c.hasApiKey() && !c.hasWowPath(), "no key or path configured on a fresh config");
+        check(c.wowFlavorId() == 0 && c.wowFlavorName().isEmpty(), "no WoW flavor is known on a fresh config");
 
         c.search("anything"); // no API key: must fail cleanly through the error signal, not crash or hang
         check(waitFor([&] { return errContext == "search"; }), "an API call without a key reports an error");
@@ -194,6 +267,12 @@ void testControllerEndToEnd() {
 
         c.setWowPath(tmp.path() + "/wow");
         check(waitFor([&] { return c.hasWowPath(); }), "setting the WoW path reaches the controller");
+        check(c.wowFlavorId() == 0, "without an API key the flavor cannot be worked out, and stays unknown");
+
+        c.setWowFlavor(517); // a manual choice works without a key; the name lookup just comes back empty
+        check(waitFor([&] { return c.wowFlavorId() == 517; }), "a flavor picked by hand is stored and reaches the controller");
+        c.setWowPath(tmp.path() + "/wow");
+        check(waitFor([&] { return c.wowFlavorId() == 0; }), "changing the WoW path clears the flavor that described the old folder");
 
         c.scan();
         check(waitFor([&] { return !c.scanning(); }), "a scan finishes");
@@ -244,6 +323,8 @@ int main(int argc, char** argv) {
     testPendingUpdatesModel();
     testScanResultsModel();
     testCleanTocText();
+    testInstallFilesModel();
+    testInstallFileFromCurseForge();
     testSearchResultsModel();
     testInstalledAddonsModel();
     testControllerEndToEnd();
