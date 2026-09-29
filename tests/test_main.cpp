@@ -396,6 +396,67 @@ void testMatchFlavor() {
     check(!CurseForgeClient::matchFlavor(types, "nonsense").has_value(), "matchFlavor returns nullopt for no match");
 }
 
+void testFlavorForFolder() {
+    std::vector<GameVersionType> types = {
+        {10, "Retail", "retail"},
+        {20, "Classic Era", "classic-era"},
+        {30, "Burning Crusade Classic", "burning-crusade-classic"},
+        {40, "Forever", "forever"},
+    };
+    auto id = [&](const char* folder) { return CurseForgeClient::matchFlavorForFolder(types, folder); };
+    check(id("_retail_") == std::optional<int64_t>(10), "a _retail_ folder resolves to Retail");
+    check(id("_classic_era_") == std::optional<int64_t>(20), "a _classic_era_ folder resolves to Classic Era (name match)");
+    check(id("_forever_") == std::optional<int64_t>(40), "a folder named after a newly added flavor resolves without any hardcoding");
+    check(id("_ptr_") == std::optional<int64_t>(10) && id("_xptr_") == std::optional<int64_t>(10) && id("_beta_") == std::optional<int64_t>(10),
+          "retail test realms share Retail's addons");
+    check(id("_classic_era_ptr_") == std::optional<int64_t>(20), "a classic era test realm resolves to Classic Era");
+    check(!id("_classic_").has_value(), "an ambiguous folder such as _classic_ is never guessed");
+    check(!id("World of Warcraft").has_value() && !id("").has_value() && !id("_ptr_x_").has_value(),
+          "unknown and empty folder names resolve to nothing");
+}
+
+void testConfigFlavorRoundtrip(const fs::path& workDir) {
+    setenv("XDG_CONFIG_HOME", (workDir / "cfg_flavor").string().c_str(), 1);
+    Config cfg;
+    cfg.wow_path = "/games/World of Warcraft/_retail_/";
+    check(cfg.wowFolderName() == "_retail_", "wowFolderName ignores a trailing slash");
+    cfg.wow_path = "/games/wow/_classic_era_";
+    check(cfg.wowFolderName() == "_classic_era_", "wowFolderName returns the last path component");
+    check(Config().wowFolderName().empty(), "wowFolderName is empty when no path is set");
+
+    cfg.wow_flavor_id = 517;
+    cfg.wow_flavor_name = "Retail";
+    cfg.save();
+    auto back = Config::load();
+    check(back.wow_flavor_id == std::optional<int64_t>(517) && back.wow_flavor_name == std::optional<std::string>("Retail"),
+          "the WoW folder's flavor round-trips through config.json");
+
+    Config none; none.wow_path = "/x";
+    none.save();
+    auto backNone = Config::load();
+    check(!backNone.wow_flavor_id.has_value() && !backNone.wow_flavor_name.has_value(),
+          "a config with no flavor loads as unset (also covers files written before this field existed)");
+}
+
+void testParseFilesPage() {
+    const std::string body = R"({"data":[
+      {"id":30,"modId":1,"displayName":"v3","fileName":"a-3.zip","releaseType":1,"fileDate":"2026-09-29T14:03:11.5Z","downloadUrl":"u"},
+      {"id":20,"modId":1,"displayName":"v2","fileName":"a-2.zip","releaseType":2,"fileDate":null,"downloadUrl":null}
+    ],"pagination":{"index":0,"pageSize":2,"resultCount":2,"totalCount":5}})";
+    auto page = CurseForgeClient::parseFilesPage(body);
+    check(page.files.size() == 2 && page.totalCount == 5 && page.index == 0, "parseFilesPage reads the files and the pagination totals");
+    check(page.hasMore(), "hasMore is true while files remain beyond this page");
+    check(page.files[0].fileDate == "2026-09-29T14:03:11.5Z" && page.files[1].fileDate.empty(),
+          "fileDate is read, and a null date becomes empty");
+    check(page.files[1].isBlocked() && !page.files[0].isBlocked(), "blocked downloads still parse alongside dates");
+
+    auto noPagination = CurseForgeClient::parseFilesPage(R"({"data":[{"id":1,"modId":1}]})");
+    check(noPagination.totalCount == 1 && !noPagination.hasMore(), "a response without pagination counts as one complete page");
+    auto last = CurseForgeClient::parseFilesPage(
+        R"({"data":[{"id":1,"modId":1}],"pagination":{"index":4,"pageSize":2,"resultCount":1,"totalCount":5}})");
+    check(last.index == 4 && !last.hasMore(), "the final page reports no more");
+}
+
 void testNoApiKeyStillUsable(const fs::path& workDir) {
     // Core requirement from the plan: the app must stay usable for managing
     // already-installed addons with no API key and no network. Config with
@@ -554,6 +615,9 @@ int main() {
     testSelectBestFile();
     testMatchFlavor();
     testParseModResponses();
+    testFlavorForFolder();
+    testConfigFlavorRoundtrip(workDir);
+    testParseFilesPage();
     testNoApiKeyStillUsable(workDir);
     testTocReader(workDir);
     testReconciler(workDir);
