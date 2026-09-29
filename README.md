@@ -5,9 +5,10 @@ installs and updates addons, and keeps its own record of what it put where.
 It has two front ends over that same core:
 
 - `wam`: a CLI covering everything the core can do
-- `wam-gui`: a Qt 6 / Kirigami desktop app (search, install, scanning for
-  addons you already have, an update review popup, manual install for blocked
-  downloads, settings), with each addon's CurseForge icon shown in the lists
+- `wam-gui`: a Qt 6 / Kirigami desktop app (a sidebar with AddOns, Search and
+  Settings; scanning for addons you already have and an update review, both as
+  popups; manual install for blocked downloads), with each addon's CurseForge
+  icon shown in the lists
 
 ## Build
 
@@ -90,39 +91,48 @@ unknown flavor.
 
 ## Using the GUI
 
-- **Installed**: everything wam tracks, with each addon's CurseForge icon and
-  the flavor it was installed for. Addons adopted from an existing folder have
-  no flavor yet; pick one from the "Set flavor" box on the row. The overflow
-  menu removes an addon (deleting its folders) or stops tracking it (files
-  untouched). Icons for addons tracked before icons existed are filled in
-  automatically the next time the app starts with an API key.
+A sidebar sits to the left of the page you are on and is open by default. Its
+"Close Sidebar" button shrinks it to a strip of icons; it never disappears
+completely. Pages are created once and kept, so switching tabs does not lose
+your search text or results.
+
+- **AddOns** (page title "Installed AddOns"): everything wam tracks, with each
+  addon's CurseForge icon and the flavor it was installed for. Addons adopted
+  from an existing folder have no flavor yet; pick one from the "Set flavor"
+  box on the row. The overflow menu removes an addon (deleting its folders) or
+  stops tracking it (files untouched). Icons for addons tracked before icons
+  existed are filled in automatically the next time the app starts with an API
+  key. The toolbar has three buttons:
+  - **Check for updates** queues every addon with a newer file and opens the
+    update popup (below).
+  - **Review updates (N)** appears while updates are queued, to reopen the
+    popup if you closed it early.
+  - **Scan for existing addons** opens the scan window (below).
 - **Search**: search CurseForge, then choose a **flavor** and channel and
   install. The flavor picker only offers flavors the addon actually has files
   for, and you must pick one (it is pre-selected only when there is a single
   choice). The chosen flavor is saved on the addon and shown in the list.
-- **Existing addons**: scans your AddOns folder for addons wam doesn't track
-  yet (also reachable from the Installed page). Folders whose `.toc` carries a
-  CurseForge id are grouped by mod, shown with the mod's real name and icon,
-  and adopted with one click, or all at once with "Adopt all matched". Folders
-  with no tag get their own row: use "Search" to look the addon up on
-  CurseForge, or type its mod id and adopt it by hand. Adopting only records
-  the folders; nothing on disk changes, and the version stays unknown until
-  the addon's first update. With an API key, adopting a mod also claims its
-  other untracked modules (most multi-module addons only tag their primary
-  one).
-- **Updates**: "Check for updates" (in the sidebar and on the Installed page)
-  queues every addon with a newer file and opens a popup. Diffs are reviewed
-  **one addon at a time**: **Apply** installs that update and moves to the
-  next diff, **Apply all** (to the right of Apply) accepts every remaining
-  update in one go, and **Skip** drops an update without installing it. The
-  popup closes itself when the queue is empty; if you close it early, the
-  sidebar shows "Review updates (N)" to reopen it. Updates stay within the
-  flavor the addon was installed for.
-- **Blocked downloads**: if an author has disabled third-party downloads, the
-  update or install shows a notice with "Open on CurseForge" and "Choose
-  zip...". Download the file in your browser, then point wam at it. Blocked
-  rows are skipped by Apply all.
 - **Settings**: CurseForge API key and WoW folder.
+
+Two popups:
+
+- **Update review.** Diffs are reviewed **one addon at a time**: **Apply**
+  installs that update and moves to the next diff, **Apply all** (to the right
+  of Apply) accepts every remaining update in one go, and **Skip** drops an
+  update without installing it. The popup closes itself when the queue is
+  empty. Updates stay within the flavor the addon was installed for. If the
+  author has disabled third-party downloads, the diff shows "Open on
+  CurseForge" and "Choose zip..."; download the file in your browser, then
+  point wam at it. Blocked rows are skipped by Apply all.
+- **Existing addons.** Scans your AddOns folder for addons wam doesn't track
+  yet. Folders whose `.toc` carries a CurseForge id are grouped by mod, shown
+  with the mod's real name and icon, and adopted with one click, or all at
+  once with "Adopt all matched". Folders with no tag get their own row: use
+  "Search" to look the addon up on CurseForge, or type its mod id and adopt it
+  by hand. Adopting only records the folders; nothing on disk changes, and the
+  version stays unknown until the addon's first update. With an API key,
+  adopting a mod also claims its other untracked modules (most multi-module
+  addons only tag their primary one).
 
 All network and disk work runs on a single worker thread, so the window
 stays responsive during searches, downloads and updates. Requests are
@@ -285,13 +295,6 @@ Known limitations:
   `installed.json`, the folders are the new version while the state still
   says the old one. The next update corrects it, but an addon whose new
   version added a module would not have that module tracked until then.
-- Pages in the GUI are recreated when you navigate, so typed (not yet
-  submitted) search text resets.
-- Kirigami may log "Created graphical object was not placed in the graphics
-  scene" each time a page is opened. As far as I can tell that comes from
-  Kirigami creating the page before attaching it and is cosmetic, but I could
-  not reproduce it here (the sandbox only has the Qt 5 Kirigami), so treat
-  that as unconfirmed.
 - Addon icons are fetched from CurseForge's CDN on demand by Qt Quick's own
   image loader; they need network access and are not cached to disk by wam.
 
@@ -316,13 +319,25 @@ docs rather than patched by guesswork:
    through as the API's own `gameVersionTypeId` filter on
    `/v1/mods/{modId}/files`.
 
+A third, from running the GUI:
+
+3. **"Created graphical object was not placed in the graphics scene" on every
+   tab switch.** Kirigami's `PageRow` instantiates a pushed Component or URL
+   with `createObject()` and a plain `QtObject` as the parent (see
+   `pagesLogic` in Kirigami's `PageRow.qml`), and QtQuick warns whenever a
+   visual item is created under a non-visual parent. Reproduced with plain
+   QtQuick: `createObject` with a `QtObject` parent warns, with an `Item`
+   parent or none it does not. Pages now live in a `Kirigami.PagePool`, which
+   creates each one once in C++ (`createWithInitialProperties`, which does not
+   warn) and reuses it, so navigation no longer goes through that path.
+
 ## Layout
 
 ```
 src/core/   wam_core: config, HTTP, CurseForge client, installer, state, .toc reader, reconciler
 src/cli/    the wam CLI
 src/gui/    Qt adapter layer (worker thread, controller, list models) and wam-gui
-src/gui/qml/ Kirigami views (pages, the updates popup, the icon component)
+src/gui/qml/ Kirigami views (pages, the update and scan popups, the icon component)
 data/       .desktop file
 tests/      test_main.cpp (core), gui_tests.cpp (adapter layer)
 ```
@@ -351,13 +366,17 @@ libzip 1.7, Qt 6.4.2) whose network egress does not include
   and adopts from it, offline. The `wam-gui` executable was linked using a
   scratch-only workaround for Qt 6.4 (which lacks `loadFromModule`); the
   shipped code requires Qt 6.5.
-- **Confirmed by real use, not by me:** the QML views have been run on a
-  desktop with Kirigami 6. That run surfaced the `[undefined]` to QString
-  binding errors on the update page, now fixed at the source (the review
-  queue's `head` always has every key) with a test that fails without the fix.
-- **Not verified here:** the QML in this version (the updates popup, the
-  existing-addons page, the icon component and the reworked lists) has only
-  been linted for syntax, not rendered. Nothing has been exercised against
+- **Confirmed by real use, not by me:** an earlier version of the QML views
+  was run on a desktop with Kirigami 6. That surfaced the `[undefined]` to
+  QString binding errors on the update page (fixed at the source: the review
+  queue's `head` always has every key, with a test that fails without the fix)
+  and the graphics-scene warning above.
+- **Not verified here:** the QML in this version (the PagePool navigation, the
+  sidebar settings, the update and scan popups, the icon component and the
+  reworked lists) has only been linted for syntax, not rendered. The
+  `PagePool`, `PagePoolAction` and drawer properties it uses were checked
+  against Kirigami's upstream `master` sources, which may differ from the
+  version you have installed. Nothing has been exercised against
   the live CurseForge API (`search`, `files`, `install`, `update`, adopt's
   `moduleNames` cross-check, batched mod lookups for icons, and the flavor
   picker). In particular, icons rely on the mod's `logo.thumbnailUrl` and the
