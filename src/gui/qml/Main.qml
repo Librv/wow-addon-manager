@@ -7,8 +7,11 @@ import org.kde.kirigami as Kirigami
 Kirigami.ApplicationWindow {
     id: root
     title: qsTr("WoW Addon Manager")
-    width: 980
-    height: 660
+    // Wide enough for the sidebar plus a comfortable page next to it.
+    width: 1180
+    height: 720
+    minimumWidth: Kirigami.Units.gridUnit * 40
+    minimumHeight: Kirigami.Units.gridUnit * 25
     visible: true
 
     property var manualTarget: ({ modId: 0, fileId: 0 })
@@ -51,6 +54,12 @@ Kirigami.ApplicationWindow {
 
     globalDrawer: Kirigami.GlobalDrawer {
         isMenu: false
+        // A permanent sidebar that sits beside the page instead of covering
+        // and dimming it. The "Close Sidebar" button at its bottom shrinks it
+        // to an icon-only strip; it never disappears completely.
+        modal: false
+        collapsible: true
+        collapsed: false
         actions: [
             Kirigami.PagePoolAction {
                 text: qsTr("Installed"); icon.name: "view-list-details"
