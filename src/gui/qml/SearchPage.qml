@@ -7,13 +7,16 @@ Kirigami.ScrollablePage {
     id: page
     title: qsTr("Search CurseForge")
     readonly property var win: QQC2.ApplicationWindow.window
-    property string initialQuery: ""   // set when arriving from the scan page
 
-    Component.onCompleted: if (initialQuery.length > 0 && wam.hasApiKey) wam.search(initialQuery)
+    // Fill the search box and run the search (used when arriving from the scan window).
+    function runQuery(text) {
+        searchField.text = text
+        if (wam.hasApiKey && text.length > 0) wam.search(text)
+    }
 
     header: Kirigami.SearchField {
+        id: searchField
         enabled: wam.hasApiKey
-        text: page.initialQuery
         onAccepted: wam.search(text)
     }
 

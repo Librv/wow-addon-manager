@@ -13,11 +13,29 @@ Kirigami.ApplicationWindow {
 
     property var manualTarget: ({ modId: 0, fileId: 0 })
 
-    function show(page) { pageStack.clear(); pageStack.push(page) }
-    function showInstalled() { show(installedPage) }
-    function showSearch(query) { pageStack.clear(); pageStack.push(searchPage, { initialQuery: query || "" }) }
-    function showScan() { show(scanPage) }
-    function showSettings() { show(settingsPage) }
+    // Pages live in a PagePool: each one is created once (in C++, via
+    // createWithInitialProperties) and reused on every visit. Pushing a
+    // Component or URL onto the PageRow instead makes Kirigami call
+    // createObject() with a plain QtObject as parent, which is what printed
+    // "Created graphical object was not placed in the graphics scene" on every
+    // tab switch. Caching also keeps each page's state (search text, results).
+    Kirigami.PagePool { id: mainPagePool }
+
+    function showPage(file) {
+        const page = mainPagePool.loadPage(Qt.resolvedUrl(file))
+        if (pageStack.currentItem !== page) {
+            pageStack.clear()
+            pageStack.push(page)
+        }
+        return page
+    }
+    function showInstalled() { showPage("InstalledPage.qml") }
+    function showSearch(query) {
+        const page = showPage("SearchPage.qml")
+        if (query) page.runQuery(query)
+    }
+    function showScan() { showPage("ScanPage.qml") }
+    function showSettings() { showPage("SettingsPage.qml") }
     function checkUpdates() {
         if (!wam.checkingUpdates) {
             wam.checkAllUpdates()
@@ -29,20 +47,27 @@ Kirigami.ApplicationWindow {
         zipDialog.open()
     }
 
-    Component { id: installedPage; InstalledPage {} }
-    Component { id: searchPage;    SearchPage {} }
-    Component { id: scanPage;      ScanPage {} }
-    Component { id: settingsPage;  SettingsPage {} }
-
-    pageStack.initialPage: installedPage
+    Component.onCompleted: showInstalled()
 
     globalDrawer: Kirigami.GlobalDrawer {
         isMenu: false
         actions: [
-            Kirigami.Action { text: qsTr("Installed"); icon.name: "view-list-details"; onTriggered: root.showInstalled() },
-            Kirigami.Action { text: qsTr("Search"); icon.name: "system-search"; onTriggered: root.showSearch() },
-            Kirigami.Action { text: qsTr("Existing addons"); icon.name: "folder-search"; onTriggered: root.showScan() },
-            Kirigami.Action { text: qsTr("Settings"); icon.name: "configure"; onTriggered: root.showSettings() },
+            Kirigami.PagePoolAction {
+                text: qsTr("Installed"); icon.name: "view-list-details"
+                pagePool: mainPagePool; page: Qt.resolvedUrl("InstalledPage.qml")
+            },
+            Kirigami.PagePoolAction {
+                text: qsTr("Search"); icon.name: "system-search"
+                pagePool: mainPagePool; page: Qt.resolvedUrl("SearchPage.qml")
+            },
+            Kirigami.PagePoolAction {
+                text: qsTr("Existing addons"); icon.name: "folder-search"
+                pagePool: mainPagePool; page: Qt.resolvedUrl("ScanPage.qml")
+            },
+            Kirigami.PagePoolAction {
+                text: qsTr("Settings"); icon.name: "configure"
+                pagePool: mainPagePool; page: Qt.resolvedUrl("SettingsPage.qml")
+            },
             Kirigami.Action { separator: true },
             Kirigami.Action {
                 text: qsTr("Check for updates")
