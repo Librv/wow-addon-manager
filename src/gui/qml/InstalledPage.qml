@@ -5,7 +5,7 @@ import org.kde.kirigami as Kirigami
 
 Kirigami.ScrollablePage {
     id: page
-    title: qsTr("Installed addons")
+    title: qsTr("Installed AddOns")
     readonly property var win: QQC2.ApplicationWindow.window
 
     actions: [
@@ -14,6 +14,12 @@ Kirigami.ScrollablePage {
             icon.name: "view-refresh"
             enabled: wam.hasApiKey && !wam.checkingUpdates
             onTriggered: page.win.checkUpdates()
+        },
+        Kirigami.Action {
+            visible: wam.pendingUpdates.count > 0
+            text: qsTr("Review updates (%1)").arg(wam.pendingUpdates.count)
+            icon.name: "update-none"
+            onTriggered: page.win.reviewUpdates()
         },
         Kirigami.Action {
             text: qsTr("Scan for existing addons")
