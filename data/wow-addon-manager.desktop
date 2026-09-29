@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=WoW Addon Manager
+Comment=Install and update World of Warcraft addons from CurseForge
+Exec=wam-gui
+Icon=package-x-generic
+Categories=Game;Utility;
+Terminal=false
