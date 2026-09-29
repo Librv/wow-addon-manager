@@ -5,14 +5,21 @@ import org.kde.kirigami as Kirigami
 
 // Addons already sitting in AddOns/ that wam doesn't track. Rows whose .toc
 // carries a CurseForge id can be adopted directly; the rest need a mod id.
-Kirigami.ScrollablePage {
-    id: page
+// Opened from the AddOns page; scans when it opens.
+Kirigami.Dialog {
+    id: dialog
+
+    signal searchRequested(string query)
+    signal settingsRequested()
+
     title: qsTr("Existing addons")
-    readonly property var win: QQC2.ApplicationWindow.window
+    preferredWidth: Kirigami.Units.gridUnit * 38
+    preferredHeight: Kirigami.Units.gridUnit * 28
+    standardButtons: Kirigami.Dialog.Close
 
-    Component.onCompleted: if (wam.hasWowPath) wam.scan()
+    onOpened: if (wam.hasWowPath) wam.scan()
 
-    actions: [
+    customFooterActions: [
         Kirigami.Action {
             text: qsTr("Rescan")
             icon.name: "view-refresh"
@@ -27,9 +34,13 @@ Kirigami.ScrollablePage {
         }
     ]
 
+    // The dialog scrolls a top-level ListView itself, so the intro text is the
+    // ListView's header rather than a separate item.
     ListView {
         id: list
         model: wam.scanResults
+        clip: true
+
         header: QQC2.Label {
             visible: wam.scanResults.count > 0
             width: list.width
@@ -81,7 +92,7 @@ Kirigami.ScrollablePage {
                     QQC2.Button {
                         text: qsTr("Search")
                         icon.name: "system-search"
-                        onClicked: page.win.showSearch(row.name)
+                        onClicked: { dialog.close(); dialog.searchRequested(row.name) }
                     }
                     QQC2.TextField {
                         id: idField
@@ -109,7 +120,7 @@ Kirigami.ScrollablePage {
             helpfulAction: Kirigami.Action {
                 visible: !wam.hasWowPath
                 text: qsTr("Open settings")
-                onTriggered: page.win.showSettings()
+                onTriggered: { dialog.close(); dialog.settingsRequested() }
             }
         }
     }

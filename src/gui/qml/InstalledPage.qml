@@ -25,7 +25,7 @@ Kirigami.ScrollablePage {
             text: qsTr("Scan for existing addons")
             icon.name: "folder-search"
             enabled: wam.hasWowPath
-            onTriggered: page.win.showScan()
+            onTriggered: page.win.openScan()
         }
     ]
 
@@ -108,7 +108,7 @@ Kirigami.ScrollablePage {
             helpfulAction: Kirigami.Action {
                 text: wam.hasWowPath ? qsTr("Scan for existing addons") : qsTr("Open settings")
                 icon.name: wam.hasWowPath ? "folder-search" : "configure"
-                onTriggered: wam.hasWowPath ? page.win.showScan() : page.win.showSettings()
+                onTriggered: wam.hasWowPath ? page.win.openScan() : page.win.showSettings()
             }
         }
     }

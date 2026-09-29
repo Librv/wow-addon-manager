@@ -61,7 +61,7 @@ if(WAM_BUILD_GUI)
             src/gui/qml/AddonIcon.qml
             src/gui/qml/InstalledPage.qml
             src/gui/qml/SearchPage.qml
-            src/gui/qml/ScanPage.qml
+            src/gui/qml/ScanDialog.qml
             src/gui/qml/SettingsPage.qml
             src/gui/qml/UpdatesDialog.qml
     )
