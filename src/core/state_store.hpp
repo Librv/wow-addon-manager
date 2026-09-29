@@ -23,9 +23,12 @@ struct InstalledAddon {
     std::vector<std::string> folders; // top-level AddOns/ folders this addon owns
     std::string installedAt;          // ISO-8601 UTC
     bool manuallyProvided = false;    // true if installed via a user-supplied file (blocked download)
+    int64_t flavorTypeId = 0;         // CurseForge gameVersionTypeId picked at install; 0 = unknown (adopted/legacy)
+    std::string flavorName;           // display name captured at install time
+    std::string iconUrl;              // CurseForge logo thumbnail; empty until known (backfilled by the GUI)
 };
 
-// installed.json lives at Config::dataDir()/installed.json — this is the
+// installed.json lives at Config::dataDir()/installed.json. This is the
 // app's own record of what it put where, independent of the game folder
 // itself. Reconciliation with what's actually on disk is milestone 2.
 class StateStore {

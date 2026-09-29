@@ -3,6 +3,7 @@
 #include "core/addon_installer.hpp"
 #include "core/state_store.hpp"
 #include "core/http_client.hpp"
+#include "core/scoped_temp_file.hpp"
 #include "core/toc_reader.hpp"
 #include "core/reconciler.hpp"
 
@@ -19,7 +20,7 @@ namespace {
 
 void printUsage() {
     std::cout <<
-        "wam - WoW addon manager core CLI (milestone 1: CurseForge + manual install, no UI)\n\n"
+        "wam - WoW addon manager core CLI\n\n"
         "Config:\n"
         "  wam config set-key <api_key>\n"
         "  wam config set-path <wow_install_dir>\n"
@@ -29,7 +30,8 @@ void printUsage() {
         "  wam flavors                       (list known WoW flavors/version-types)\n"
         "  wam files <modId> [--flavor <name>]\n"
         "  wam install <modId> [--channel release|beta|alpha] [--flavor <name>]\n\n"
-        "Updates (shows current-vs-latest and asks before applying; --yes skips the prompt):\n"
+        "Updates (shows current-vs-latest and asks before applying; --yes skips the prompt).\n"
+        "An addon updates within the flavor it was installed for; --flavor overrides and re-saves it:\n"
         "  wam update <modId> [--channel release|beta|alpha] [--flavor <name>] [--yes]\n"
         "  wam update-all [--flavor <name>] [--yes]\n\n"
         "Manual install (for addons with third-party downloads blocked):\n"
@@ -37,11 +39,12 @@ void printUsage() {
         "Reconciliation (folders already in AddOns/ that wam didn't put there):\n"
         "  wam scan                                        (report untracked folders + .toc-detected mod ids)\n"
         "  wam adopt --mod-id <id>                         (adopt all untracked folders tagged for that mod)\n"
-        "  wam adopt --folder <name> --mod-id <id>         (manually assign one folder, e.g. no .toc tag found)\n\n"
+        "  wam adopt --folder <name> --mod-id <id>         (manually assign one folder, e.g. no .toc tag found)\n"
+        "  wam set-flavor <modId> <flavor>                 (record which flavor an adopted addon is for)\n\n"
         "Local state:\n"
         "  wam list\n"
         "  wam remove <modId>              (delete tracked folders from disk + drop from state)\n"
-        "  wam untrack <modId>             (drop from state only — files untouched, for re-scanning)\n";
+        "  wam untrack <modId>             (drop from state only: files untouched, for re-scanning)\n";
 }
 
 ReleaseChannel parseChannel(const std::string& s) {
@@ -63,13 +66,49 @@ std::string channelName(ReleaseChannel c) {
 CurseForgeClient requireClient() {
     auto cfg = Config::load();
     if (!cfg.curseforge_api_key.has_value())
-        throw std::runtime_error("no CurseForge API key configured — run: wam config set-key <key>");
+        throw std::runtime_error("no CurseForge API key configured, run: wam config set-key <key>");
     return CurseForgeClient(*cfg.curseforge_api_key);
 }
 
+// Resolves the AddOns dir and, if a previous install was killed mid-swap,
+// puts the interrupted folders back before anything else looks at them.
 std::filesystem::path requireAddonsDir() {
     auto cfg = Config::load();
-    return cfg.addonsDir(); // throws if wow_path unset
+    auto dir = cfg.addonsDir(); // throws if wow_path unset
+    if (std::filesystem::exists(dir)) {
+        auto restored = AddonInstaller::recoverInterrupted(dir);
+        if (restored > 0)
+            std::cerr << "(recovered " << restored << " folder(s) from an interrupted install)\n";
+    }
+    return dir;
+}
+
+std::string flavorNameFor(CurseForgeClient& client, int64_t id) {
+    if (id == 0) return {};
+    try {
+        for (const auto& t : client.listGameVersionTypes())
+            if (t.id == id) return t.name;
+    } catch (const std::exception&) {}
+    return {};
+}
+
+// Prints "unknown flavor" + the valid list. Returns the resolved id or nullopt.
+std::optional<int64_t> resolveFlavorOrComplain(CurseForgeClient& client, const std::string& flavor,
+                                                const std::string& prefix = "") {
+    auto id = client.gameVersionTypeId(flavor);
+    if (!id.has_value()) {
+        std::cerr << prefix << "Unknown flavor '" << flavor << "'. Known flavors:\n";
+        try {
+            for (const auto& t : client.listGameVersionTypes()) std::cerr << "  " << t.name << "\n";
+        } catch (const std::exception&) {}
+    }
+    return id;
+}
+
+std::string joinFolders(const std::vector<std::string>& folders) {
+    std::string out;
+    for (size_t i = 0; i < folders.size(); ++i) out += folders[i] + (i + 1 < folders.size() ? ", " : "");
+    return out;
 }
 
 // Records the install in state and prints a verification summary.
@@ -80,12 +119,10 @@ void recordAndReport(const InstalledAddon& addon) {
 
     std::cout << "Installed: " << addon.displayName << " (mod " << addon.modId
               << ", file " << addon.fileId << ")\n"
-              << "  Channel: " << channelName(addon.channel) << "\n"
-              << "  Folders: ";
-    for (size_t i = 0; i < addon.folders.size(); ++i) {
-        std::cout << addon.folders[i] << (i + 1 < addon.folders.size() ? ", " : "");
-    }
-    std::cout << "\n  Source:  " << (addon.manuallyProvided ? "manual file" : "CurseForge download") << "\n";
+              << "  Channel: " << channelName(addon.channel) << "\n";
+    if (!addon.flavorName.empty()) std::cout << "  Flavor:  " << addon.flavorName << "\n";
+    std::cout << "  Folders: " << joinFolders(addon.folders)
+              << "\n  Source:  " << (addon.manuallyProvided ? "manual file" : "CurseForge download") << "\n";
 }
 
 int cmdConfig(int argc, char** argv) {
@@ -154,12 +191,8 @@ int cmdFiles(int argc, char** argv) {
     auto client = requireClient();
     std::optional<int64_t> gvTypeId;
     if (flavor.has_value()) {
-        gvTypeId = client.gameVersionTypeId(*flavor);
-        if (!gvTypeId.has_value()) {
-            std::cerr << "Unknown flavor '" << *flavor << "'. Known flavors:\n";
-            for (const auto& t : client.listGameVersionTypes()) std::cerr << "  " << t.name << "\n";
-            return 1;
-        }
+        gvTypeId = resolveFlavorOrComplain(client, *flavor);
+        if (!gvTypeId.has_value()) return 1;
     }
     auto files = client.getFiles(modId, gvTypeId);
 
@@ -193,12 +226,8 @@ int cmdInstall(int argc, char** argv) {
 
     std::optional<int64_t> gvTypeId;
     if (flavor.has_value()) {
-        gvTypeId = client.gameVersionTypeId(*flavor);
-        if (!gvTypeId.has_value()) {
-            std::cerr << "Unknown flavor '" << *flavor << "'. Known flavors:\n";
-            for (const auto& t : client.listGameVersionTypes()) std::cerr << "  " << t.name << "\n";
-            return 1;
-        }
+        gvTypeId = resolveFlavorOrComplain(client, *flavor);
+        if (!gvTypeId.has_value()) return 1;
     }
 
     auto files = client.getFiles(modId, gvTypeId);
@@ -220,15 +249,18 @@ int cmdInstall(int argc, char** argv) {
     }
 
     auto addonsDir = requireAddonsDir();
-    auto tmpZip = Config::dataDir() / "tmp" / (std::to_string(chosen->id) + "_" + chosen->fileName);
-    auto dlResp = HttpClient::downloadToFile(*chosen->downloadUrl, tmpZip);
+    ScopedTempFile tmpZip(Config::dataDir() / "tmp" / (std::to_string(chosen->id) + "_" + chosen->fileName));
+    auto dlResp = HttpClient::downloadToFile(*chosen->downloadUrl, tmpZip.path());
     if (!dlResp.ok()) {
         std::cerr << "Download failed (HTTP " << dlResp.status << ")\n";
         return 1;
     }
 
-    auto folders = AddonInstaller::extractZip(tmpZip, addonsDir);
-    std::filesystem::remove(tmpZip);
+    // Reinstalling an already-tracked mod replaces its old folders atomically.
+    auto store = StateStore::load();
+    auto existing = store.find(modId);
+    auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir,
+                                              existing ? existing->folders : std::vector<std::string>{});
 
     InstalledAddon rec;
     rec.modId = modId;
@@ -240,6 +272,14 @@ int cmdInstall(int argc, char** argv) {
     rec.folders = folders;
     rec.installedAt = nowIso8601();
     rec.manuallyProvided = false;
+    rec.iconUrl = !mod.logoUrl.empty() ? mod.logoUrl : (existing ? existing->iconUrl : std::string());
+    if (gvTypeId.has_value()) {
+        rec.flavorTypeId = *gvTypeId;
+        rec.flavorName = flavorNameFor(client, *gvTypeId);
+    } else if (existing.has_value()) {
+        rec.flavorTypeId = existing->flavorTypeId;
+        rec.flavorName = existing->flavorName;
+    }
 
     recordAndReport(rec);
     return 0;
@@ -256,10 +296,14 @@ int cmdInstallManual(int argc, char** argv) {
         return 1;
     }
 
-    std::string displayName = "mod " + std::to_string(modId);
+    auto store = StateStore::load();
+    auto existing = store.find(modId);
+
+    std::string displayName = existing ? existing->displayName : "mod " + std::to_string(modId);
     std::string fileName = zipPath.filename().string();
-    ReleaseChannel channel = ReleaseChannel::Release;
+    ReleaseChannel channel = existing ? existing->channel : ReleaseChannel::Release;
     std::vector<std::string> gameVersions;
+    std::string iconUrl = existing ? existing->iconUrl : std::string();
 
     // Best-effort: enrich with real metadata if a key is configured, but
     // this must work with no API key/network at all (manual pointing is
@@ -274,13 +318,15 @@ int cmdInstallManual(int argc, char** argv) {
             fileName = file.fileName;
             channel = file.releaseType;
             gameVersions = file.gameVersions;
+            if (!mod.logoUrl.empty()) iconUrl = mod.logoUrl;
         }
     } catch (const std::exception& e) {
         std::cerr << "(note: could not fetch metadata, proceeding with local file only: " << e.what() << ")\n";
     }
 
     auto addonsDir = requireAddonsDir();
-    auto folders = AddonInstaller::extractZip(zipPath, addonsDir);
+    auto folders = AddonInstaller::installZip(zipPath, addonsDir,
+                                              existing ? existing->folders : std::vector<std::string>{});
 
     InstalledAddon rec;
     rec.modId = modId;
@@ -292,15 +338,21 @@ int cmdInstallManual(int argc, char** argv) {
     rec.folders = folders;
     rec.installedAt = nowIso8601();
     rec.manuallyProvided = true;
+    rec.iconUrl = iconUrl;
+    if (existing.has_value()) {
+        rec.flavorTypeId = existing->flavorTypeId;
+        rec.flavorName = existing->flavorName;
+    }
 
     recordAndReport(rec);
     return 0;
 }
 
 // Shared by 'update' and 'update-all'. Fetches the current best file for an
-// already-tracked mod, shows a diff against what's installed, and applies
-// it only after confirmation (or immediately if assumeYes) — per-mod
-// failures are caught here so update-all can keep going past one bad mod.
+// already-tracked mod (within the flavor it was installed for), shows a diff
+// against what's installed, and applies it only after confirmation (or
+// immediately if assumeYes). Per-mod failures are caught here so update-all
+// can keep going past one bad mod.
 int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
                   std::optional<ReleaseChannel> channelOverride, bool assumeYes) {
     auto store = StateStore::load();
@@ -315,11 +367,13 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         auto client = requireClient();
         auto mod = client.getMod(modId);
 
+        // Stored flavor by default; an explicit --flavor overrides and is saved.
         std::optional<int64_t> gvTypeId;
+        if (existing->flavorTypeId != 0) gvTypeId = existing->flavorTypeId;
         if (flavor.has_value()) {
-            gvTypeId = client.gameVersionTypeId(*flavor);
+            gvTypeId = resolveFlavorOrComplain(client, *flavor, mod.name + ": ");
             if (!gvTypeId.has_value()) {
-                std::cerr << mod.name << ": unknown flavor '" << *flavor << "'. Skipping.\n";
+                std::cerr << mod.name << ": skipping.\n";
                 return 1;
             }
         }
@@ -328,7 +382,7 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         auto chosen = CurseForgeClient::selectBestFile(files, channel);
         if (!chosen.has_value()) {
             std::cout << mod.name << ": no " << channelName(channel) << " file found"
-                      << (flavor ? " for flavor '" + *flavor + "'" : "") << ". Skipping.\n";
+                      << (gvTypeId ? " for this flavor" : "") << ". Skipping.\n";
             return 0;
         }
 
@@ -337,12 +391,12 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
             return 0;
         }
 
-        std::cout << mod.name << ":\n"
+        std::cout << mod.name << (existing->flavorName.empty() ? "" : " [" + existing->flavorName + "]") << ":\n"
                   << "  current: " << (existing->fileId == 0 ? "unknown (adopted, never pinned)" : existing->fileName) << "\n"
                   << "  latest:  " << chosen->fileName << " (" << channelName(chosen->releaseType) << ")\n";
 
         if (chosen->isBlocked()) {
-            std::cout << "  Third-party downloads blocked by the author — install manually:\n"
+            std::cout << "  Third-party downloads blocked by the author, install manually:\n"
                        << "    wam install-manual " << modId << " " << chosen->id << " <path-to-downloaded-zip>\n";
             return 0;
         }
@@ -358,20 +412,18 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         }
 
         auto addonsDir = requireAddonsDir();
-        auto tmpZip = Config::dataDir() / "tmp" / (std::to_string(chosen->id) + "_" + chosen->fileName);
-        auto dlResp = HttpClient::downloadToFile(*chosen->downloadUrl, tmpZip);
+        ScopedTempFile tmpZip(Config::dataDir() / "tmp" / (std::to_string(chosen->id) + "_" + chosen->fileName));
+        auto dlResp = HttpClient::downloadToFile(*chosen->downloadUrl, tmpZip.path());
         if (!dlResp.ok()) {
             std::cerr << "  Download failed (HTTP " << dlResp.status << ")\n";
             return 1;
         }
 
-        // Clean update: drop the old folders first so a module the new
-        // file no longer ships doesn't linger as orphaned dead weight.
+        // Transactional swap: the new file is fully extracted to staging
+        // first, then old folders are moved aside and the new ones renamed
+        // in. If anything fails, the old version is restored untouched.
         // (SavedVariables live under WTF/, untouched by this.)
-        AddonInstaller::removeFolders(addonsDir, existing->folders);
-
-        auto folders = AddonInstaller::extractZip(tmpZip, addonsDir);
-        std::filesystem::remove(tmpZip);
+        auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir, existing->folders);
 
         InstalledAddon rec = *existing;
         rec.fileId = chosen->id;
@@ -381,6 +433,10 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
+        if (flavor.has_value()) {
+            rec.flavorTypeId = *gvTypeId;
+            rec.flavorName = flavorNameFor(client, *gvTypeId);
+        }
 
         store.upsert(rec);
         store.save();
@@ -432,11 +488,10 @@ int cmdList(int, char**) {
     std::cout << store.all().size() << " addon(s) tracked:\n";
     for (const auto& a : store.all()) {
         std::cout << "  [" << a.modId << "] " << a.displayName
-                   << " — " << a.fileName << " (" << channelName(a.channel) << ")"
+                   << " - " << a.fileName << " (" << channelName(a.channel) << ")"
+                   << (a.flavorName.empty() ? "" : " [" + a.flavorName + "]")
                    << (a.manuallyProvided ? " [manual]" : "") << "\n";
-        std::cout << "      folders: ";
-        for (size_t i = 0; i < a.folders.size(); ++i)
-            std::cout << a.folders[i] << (i + 1 < a.folders.size() ? ", " : "");
+        std::cout << "      folders: " << joinFolders(a.folders);
         std::cout << "\n      installed: " << a.installedAt << "\n";
     }
     return 0;
@@ -458,10 +513,7 @@ int cmdRemove(int argc, char** argv) {
     store.remove(modId);
     store.save();
 
-    std::cout << "Removed " << found->displayName << " (folders: ";
-    for (size_t i = 0; i < found->folders.size(); ++i)
-        std::cout << found->folders[i] << (i + 1 < found->folders.size() ? ", " : "");
-    std::cout << ")\n";
+    std::cout << "Removed " << found->displayName << " (folders: " << joinFolders(found->folders) << ")\n";
     return 0;
 }
 
@@ -476,17 +528,38 @@ int cmdUntrack(int argc, char** argv) {
         return 1;
     }
 
-    // Deliberately does NOT touch the AddOns folder — the point is to drop
+    // Deliberately does NOT touch the AddOns folder: the point is to drop
     // wam's own bookkeeping only, e.g. to re-run 'wam scan'/'adopt' from a
     // clean slate without having to delete real files off disk.
     store.remove(modId);
     store.save();
 
     std::cout << "Untracked " << found->displayName << " (mod " << modId << "). "
-                 "Files left in place — folders: ";
-    for (size_t i = 0; i < found->folders.size(); ++i)
-        std::cout << found->folders[i] << (i + 1 < found->folders.size() ? ", " : "");
-    std::cout << "\n";
+                 "Files left in place, folders: " << joinFolders(found->folders) << "\n";
+    return 0;
+}
+
+int cmdSetFlavor(int argc, char** argv) {
+    if (argc < 2) { printUsage(); return 1; }
+    int64_t modId = std::stoll(argv[0]);
+
+    auto store = StateStore::load();
+    auto existing = store.find(modId);
+    if (!existing.has_value()) {
+        std::cerr << "No tracked addon with mod id " << modId << "\n";
+        return 1;
+    }
+
+    auto client = requireClient();
+    auto id = resolveFlavorOrComplain(client, argv[1]);
+    if (!id.has_value()) return 1;
+
+    InstalledAddon rec = *existing;
+    rec.flavorTypeId = *id;
+    rec.flavorName = flavorNameFor(client, *id);
+    store.upsert(rec);
+    store.save();
+    std::cout << rec.displayName << " is now recorded as flavor: " << rec.flavorName << "\n";
     return 0;
 }
 
@@ -505,10 +578,10 @@ int cmdScan(int, char**) {
     for (const auto& group : groups) {
         int64_t modId = group.first;
         if (modId != 0) {
-            std::cout << "  Mod " << modId << " (from .toc X-Curse-Project-ID) — "
+            std::cout << "  Mod " << modId << " (from .toc X-Curse-Project-ID), "
                       << group.second.size() << " folder(s):\n";
         } else {
-            std::cout << "  No X-Curse-Project-ID found — " << group.second.size() << " folder(s):\n";
+            std::cout << "  No X-Curse-Project-ID found, " << group.second.size() << " folder(s):\n";
         }
         for (const auto& e : group.second) {
             std::cout << "    " << e.folder;
@@ -547,7 +620,7 @@ int cmdAdopt(int argc, char** argv) {
             return 1;
         }
         // Refuse to silently move a folder that's already owned by a
-        // different tracked addon — ask for an explicit remove first.
+        // different tracked addon: ask for an explicit remove first.
         for (const auto& a : store.all()) {
             if (a.modId == *modId) continue;
             if (std::find(a.folders.begin(), a.folders.end(), *folder) != a.folders.end()) {
@@ -570,7 +643,7 @@ int cmdAdopt(int argc, char** argv) {
         // multi-module addons (e.g. a UI suite split into ActionBars/Bags/
         // etc.) commonly leave every other module's .toc untagged, so also
         // cross-check the mod's known files' moduleNames against what's
-        // sitting untracked on disk — this is the same folder list the real
+        // sitting untracked on disk. This is the same folder list the real
         // 'install' flow trusts, just sourced from the API instead of a
         // fresh extraction.
         if (auto cfg = Config::load(); cfg.curseforge_api_key.has_value()) {
@@ -585,7 +658,7 @@ int cmdAdopt(int argc, char** argv) {
                     }
                 }
             } catch (const std::exception&) {
-                // Best-effort only — self-tagged folders above still adopt fine offline.
+                // Best-effort only: self-tagged folders above still adopt fine offline.
             }
         }
 
@@ -599,42 +672,38 @@ int cmdAdopt(int argc, char** argv) {
     }
 
     // Best-effort metadata only; adoption itself must work with no API key
-    // or network — it's fundamentally a local-.toc operation, same
+    // or network: it's fundamentally a local-.toc operation, same
     // constraint install-manual already holds to.
     std::string displayName = "mod " + std::to_string(*modId);
+    std::string iconUrl;
     try {
         auto cfg = Config::load();
         if (cfg.curseforge_api_key.has_value()) {
             CurseForgeClient client(*cfg.curseforge_api_key);
-            displayName = client.getMod(*modId).name;
+            auto mod = client.getMod(*modId);
+            displayName = mod.name;
+            iconUrl = mod.logoUrl;
         }
     } catch (const std::exception& e) {
         std::cerr << "(note: could not fetch mod name, proceeding with a placeholder: " << e.what() << ")\n";
     }
 
-    auto existing = store.find(*modId);
-    InstalledAddon rec = existing.value_or(InstalledAddon{});
-    if (!existing.has_value()) {
-        rec.modId = *modId;
-        rec.fileId = 0; // unknown version — this came from a .toc tag, not a download
-        rec.displayName = displayName;
-        rec.channel = ReleaseChannel::Release;
-        rec.installedAt = nowIso8601();
-        rec.manuallyProvided = false;
+    InstalledAddon rec;
+    try {
+        rec = Reconciler::adopt(store, addonsDir, *modId, displayName, iconUrl, foldersToAdopt);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
     }
-    for (const auto& f : foldersToAdopt)
-        if (std::find(rec.folders.begin(), rec.folders.end(), f) == rec.folders.end())
-            rec.folders.push_back(f);
-
-    store.upsert(rec);
     store.save();
 
     std::cout << "Adopted " << rec.displayName << " (mod " << rec.modId << "):\n";
     for (const auto& f : foldersToAdopt) std::cout << "  " << f << "\n";
     if (rec.fileId == 0) {
-        std::cout << "File/version unknown (adopted from .toc, not a download) — "
-                     "run 'wam update " << rec.modId << "' to pin it to a real CurseForge file"
-                     "(requires an API key).\n";
+        std::cout << "File/version unknown (adopted from .toc, not a download). "
+                     "Run 'wam update " << rec.modId << "' to pin it to a real CurseForge file"
+                     " (requires an API key), and 'wam set-flavor " << rec.modId
+                  << " <flavor>' to record which flavor it is for.\n";
     }
     return 0;
 }
@@ -656,6 +725,7 @@ int main(int argc, char** argv) {
         if (cmd == "install-manual") return cmdInstallManual(argc - 2, argv + 2);
         if (cmd == "scan") return cmdScan(argc - 2, argv + 2);
         if (cmd == "adopt") return cmdAdopt(argc - 2, argv + 2);
+        if (cmd == "set-flavor") return cmdSetFlavor(argc - 2, argv + 2);
         if (cmd == "list") return cmdList(argc - 2, argv + 2);
         if (cmd == "remove") return cmdRemove(argc - 2, argv + 2);
         if (cmd == "untrack") return cmdUntrack(argc - 2, argv + 2);

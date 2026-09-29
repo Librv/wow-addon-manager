@@ -60,6 +60,11 @@ CurseForgeFile parseFile(const json& f) {
     return file;
 }
 
+std::string stringOrEmpty(const json& j, const char* key) {
+    if (j.is_object() && j.contains(key) && j.at(key).is_string()) return j.at(key).get<std::string>();
+    return {};
+}
+
 CurseForgeMod parseMod(const json& m) {
     CurseForgeMod mod;
     mod.id = m.at("id").get<int64_t>();
@@ -68,6 +73,22 @@ CurseForgeMod parseMod(const json& m) {
     mod.summary = m.value("summary", "");
     if (m.contains("links") && m.at("links").contains("websiteUrl") && !m["links"]["websiteUrl"].is_null())
         mod.websiteUrl = m["links"]["websiteUrl"].get<std::string>();
+
+    if (m.contains("logo") && m.at("logo").is_object()) {
+        // Prefer the thumbnail: icons are shown small, and it is much lighter than the full logo.
+        mod.logoUrl = stringOrEmpty(m.at("logo"), "thumbnailUrl");
+        if (mod.logoUrl.empty()) mod.logoUrl = stringOrEmpty(m.at("logo"), "url");
+    }
+
+    if (m.contains("latestFilesIndexes") && m.at("latestFilesIndexes").is_array()) {
+        for (const auto& idx : m.at("latestFilesIndexes")) {
+            if (!idx.contains("gameVersionTypeId") || idx.at("gameVersionTypeId").is_null()) continue;
+            auto id = idx.at("gameVersionTypeId").get<int64_t>();
+            if (std::find(mod.gameVersionTypeIds.begin(), mod.gameVersionTypeIds.end(), id)
+                    == mod.gameVersionTypeIds.end())
+                mod.gameVersionTypeIds.push_back(id);
+        }
+    }
     return mod;
 }
 
@@ -134,17 +155,25 @@ std::vector<GameVersionType> CurseForgeClient::listGameVersionTypes() {
     return out;
 }
 
+std::optional<int64_t> CurseForgeClient::matchFlavor(const std::vector<GameVersionType>& types,
+                                                      const std::string& flavorSubstring) {
+    const std::string want = toLower(flavorSubstring);
+    // Exact name/slug first: "classic" must not be shadowed by whichever
+    // "... Classic" flavor happens to be listed before it.
+    for (const auto& t : types)
+        if (toLower(t.name) == want || toLower(t.slug) == want) return t.id;
+    for (const auto& t : types)
+        if (containsCaseInsensitive(t.name, flavorSubstring) || containsCaseInsensitive(t.slug, flavorSubstring))
+            return t.id;
+    return std::nullopt;
+}
+
 std::optional<int64_t> CurseForgeClient::gameVersionTypeId(const std::string& flavorSubstring) {
     try {
-        auto types = listGameVersionTypes();
-        for (const auto& t : types) {
-            if (containsCaseInsensitive(t.name, flavorSubstring) || containsCaseInsensitive(t.slug, flavorSubstring))
-                return t.id;
-        }
+        return matchFlavor(listGameVersionTypes(), flavorSubstring);
     } catch (const std::exception&) {
         return std::nullopt;
     }
-    return std::nullopt;
 }
 
 std::vector<CurseForgeMod> CurseForgeClient::search(const std::string& query, int pageSize) {
@@ -154,7 +183,7 @@ std::vector<CurseForgeMod> CurseForgeClient::search(const std::string& query, in
     if (auto classId = addonsClassId(); classId.has_value()) {
         url << "&classId=" << *classId;
     }
-    // If discovery failed, we still search — unfiltered by class rather
+    // If discovery failed, we still search: unfiltered by class rather
     // than silently returning zero results forever.
 
     url << "&searchFilter=" << urlEncode(query)
@@ -164,10 +193,19 @@ std::vector<CurseForgeMod> CurseForgeClient::search(const std::string& query, in
     auto resp = HttpClient::get(url.str(), authHeaders());
     if (!resp.ok()) throwFor(resp, "search('" + query + "')");
 
-    json j = json::parse(resp.body);
+    return parseModList(resp.body);
+}
+
+std::vector<CurseForgeMod> CurseForgeClient::parseModList(const std::string& jsonBody) {
+    json j = json::parse(jsonBody);
     std::vector<CurseForgeMod> out;
     for (const auto& m : j.at("data")) out.push_back(parseMod(m));
     return out;
+}
+
+CurseForgeMod CurseForgeClient::parseModObject(const std::string& jsonBody) {
+    json j = json::parse(jsonBody);
+    return parseMod(j.at("data"));
 }
 
 CurseForgeMod CurseForgeClient::getMod(int64_t modId) {
@@ -175,8 +213,18 @@ CurseForgeMod CurseForgeClient::getMod(int64_t modId) {
     url << kBaseUrl << "/mods/" << modId;
     auto resp = HttpClient::get(url.str(), authHeaders());
     if (!resp.ok()) throwFor(resp, "getMod(" + std::to_string(modId) + ")");
-    json j = json::parse(resp.body);
-    return parseMod(j.at("data"));
+    return parseModObject(resp.body);
+}
+
+std::vector<CurseForgeMod> CurseForgeClient::getMods(const std::vector<int64_t>& modIds) {
+    if (modIds.empty()) return {};
+    json body;
+    body["modIds"] = modIds;
+    auto headers = authHeaders();
+    headers.push_back("Content-Type: application/json");
+    auto resp = HttpClient::post(std::string(kBaseUrl) + "/mods", body.dump(), headers);
+    if (!resp.ok()) throwFor(resp, "getMods()");
+    return parseModList(resp.body);
 }
 
 std::vector<CurseForgeFile> CurseForgeClient::getFiles(int64_t modId, std::optional<int64_t> gameVersionTypeId) {

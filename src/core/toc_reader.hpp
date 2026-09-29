@@ -10,11 +10,11 @@ namespace wam {
 //
 // Addon authors' packaging tools (e.g. the BigWigsMods packager) stamp
 // provider ids into the .toc as "## Key: Value" comment lines at release
-// time — this is baked into the addon's own files, not something the
+// time. This is baked into the addon's own files, not something the
 // downloading client writes after the fact. It's the same heuristic real
 // addon managers (WowUp, wocli, ...) use to recognize a pre-existing
 // install: X-Curse-Project-ID identifies the CurseForge mod (not the exact
-// file/version — there's no per-version tag), and WoWI/Wago id are stashed
+// file/version, there's no per-version tag), and WoWI/Wago id are stashed
 // here now, unused until later phases add those sources.
 struct TocMetadata {
     std::optional<int64_t> curseProjectId;

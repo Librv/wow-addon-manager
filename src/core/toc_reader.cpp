@@ -40,7 +40,7 @@ void applyField(TocMetadata& meta, const std::string& keyLower, const std::strin
         try {
             meta.curseProjectId = std::stoll(value);
         } catch (...) {
-            // Non-numeric value in the field — leave unset rather than guess.
+            // Non-numeric value in the field: leave unset rather than guess.
         }
     } else if (keyLower == "x-wowi-id" && !meta.wowiId) {
         meta.wowiId = value;
@@ -78,8 +78,6 @@ TocMetadata TocReader::parseFile(const fs::path& tocPath) {
 
         std::string key = toLower(trim(rest.substr(0, colon)));
         std::string value = trim(rest.substr(colon + 1));
-        // Curse-Project-ID appears in the wild spelled a couple of ways;
-        // normalize before the lookup above rather than repeating variants.
         applyField(meta, key, value);
     }
     return meta;
