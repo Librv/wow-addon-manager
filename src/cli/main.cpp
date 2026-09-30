@@ -6,6 +6,7 @@
 #include "core/scoped_temp_file.hpp"
 #include "core/toc_reader.hpp"
 #include "core/reconciler.hpp"
+#include "core/flavor_cache.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -242,7 +243,7 @@ int cmdInstall(int argc, char** argv) {
     if (chosen->isBlocked()) {
         std::cerr << "'" << mod.name << "' (file " << chosen->id << ", " << chosen->fileName << ") "
                    << "has third-party downloads blocked by the author.\n"
-                   << "Download it manually from https://www.curseforge.com/wow/addons/" << mod.slug
+                   << "Download it in your browser from " << CurseForgeClient::browserDownloadUrl(modId, chosen->id)
                    << " and then run:\n"
                    << "  wam install-manual " << modId << " " << chosen->id << " <path-to-downloaded-zip>\n";
         return 2;
@@ -264,11 +265,9 @@ int cmdInstall(int argc, char** argv) {
 
     InstalledAddon rec;
     rec.modId = modId;
-    rec.fileId = chosen->id;
     rec.displayName = mod.name;
-    rec.fileName = chosen->fileName;
-    rec.channel = chosen->releaseType;
-    rec.gameVersions = chosen->gameVersions;
+    recordFile(rec, *chosen);
+    rec.modSlug = mod.slug;
     rec.folders = folders;
     rec.installedAt = nowIso8601();
     rec.manuallyProvided = false;
@@ -304,6 +303,8 @@ int cmdInstallManual(int argc, char** argv) {
     ReleaseChannel channel = existing ? existing->channel : ReleaseChannel::Release;
     std::vector<std::string> gameVersions;
     std::string iconUrl = existing ? existing->iconUrl : std::string();
+    std::string slug = existing ? existing->modSlug : std::string();
+    std::optional<CurseForgeFile> fetchedFile;
 
     // Best-effort: enrich with real metadata if a key is configured, but
     // this must work with no API key/network at all (manual pointing is
@@ -318,6 +319,8 @@ int cmdInstallManual(int argc, char** argv) {
             fileName = file.fileName;
             channel = file.releaseType;
             gameVersions = file.gameVersions;
+            fetchedFile = file;
+            slug = mod.slug;
             if (!mod.logoUrl.empty()) iconUrl = mod.logoUrl;
         }
     } catch (const std::exception& e) {
@@ -335,6 +338,8 @@ int cmdInstallManual(int argc, char** argv) {
     rec.fileName = fileName;
     rec.channel = channel;
     rec.gameVersions = gameVersions;
+    if (fetchedFile) recordFile(rec, *fetchedFile);
+    rec.modSlug = slug;
     rec.folders = folders;
     rec.installedAt = nowIso8601();
     rec.manuallyProvided = true;
@@ -396,7 +401,9 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
                   << "  latest:  " << chosen->fileName << " (" << channelName(chosen->releaseType) << ")\n";
 
         if (chosen->isBlocked()) {
-            std::cout << "  Third-party downloads blocked by the author, install manually:\n"
+            std::cout << "  Third-party downloads blocked by the author. Download it in your browser from\n"
+                       << "    " << CurseForgeClient::browserDownloadUrl(modId, chosen->id) << "\n"
+                       << "  then install it manually:\n"
                        << "    wam install-manual " << modId << " " << chosen->id << " <path-to-downloaded-zip>\n";
             return 0;
         }
@@ -426,10 +433,9 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir, existing->folders);
 
         InstalledAddon rec = *existing;
-        rec.fileId = chosen->id;
-        rec.fileName = chosen->fileName;
-        rec.channel = chosen->releaseType;
-        rec.gameVersions = chosen->gameVersions;
+        recordFile(rec, *chosen);
+        rec.modSlug = mod.slug;
+        rec.adopted = false; // wam downloaded and installed these files now
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
