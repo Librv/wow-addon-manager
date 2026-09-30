@@ -13,6 +13,9 @@ Kirigami.Dialog {
     property string modName
     property string iconUrl
     property var selectedId: 0        // file id of the chosen version, 0 = none
+    readonly property bool hasVersions: wam.installFiles.count > 0
+    // Loaded, and there is nothing to install (or it failed): worth showing in red.
+    readonly property bool problem: flavorBox.currentIndex >= 0 && !wam.installFiles.loading && !hasVersions
 
     signal installStarted(string name)
     signal settingsRequested()
@@ -119,10 +122,11 @@ Kirigami.Dialog {
             }
         }
 
-        QQC2.Label { text: qsTr("Version"); opacity: 0.7 }
+        QQC2.Label { text: qsTr("Version"); opacity: 0.7; visible: dialog.hasVersions }
 
         ListView {
             id: list
+            visible: dialog.hasVersions
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(contentHeight, Kirigami.Units.gridUnit * 16)
             clip: true
@@ -159,18 +163,21 @@ Kirigami.Dialog {
                     }
                 }
             }
+        }
 
-            Kirigami.PlaceholderMessage {
-                anchors.centerIn: parent
-                width: parent.width - Kirigami.Units.gridUnit * 2
-                visible: list.count === 0
-                text: flavorBox.currentIndex < 0 ? qsTr("Pick a flavor to see the available versions")
-                    : wam.installFiles.loading ? qsTr("Loading versions…")
-                    : wam.installFiles.error.length > 0 ? qsTr("Could not load versions")
-                    : qsTr("No %1 versions for this flavor").arg(channelBox.currentText)
-                explanation: flavorBox.currentIndex >= 0 && !wam.installFiles.loading && wam.installFiles.error.length > 0
-                             ? wam.installFiles.error : ""
-            }
+        // Shown instead of the list (and its "Version" heading) when there is nothing to pick:
+        // grey while it is still loading or waiting for a flavor, red when there is nothing to install.
+        QQC2.Label {
+            Layout.fillWidth: true
+            visible: !dialog.hasVersions
+            wrapMode: Text.WordWrap
+            color: dialog.problem ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+            opacity: dialog.problem ? 1 : 0.7
+            text: flavorBox.currentIndex < 0 ? qsTr("Pick a flavor to see the available versions.")
+                : wam.installFiles.loading ? qsTr("Loading versions…")
+                : wam.installFiles.error.length > 0 ? qsTr("Could not load versions: %1").arg(wam.installFiles.error)
+                : wam.installFiles.hasMore ? qsTr("No %1 versions found so far for %2.").arg(channelBox.currentText).arg(flavorBox.currentText)
+                : qsTr("No %1 versions for %2.").arg(channelBox.currentText).arg(flavorBox.currentText)
         }
 
         // Fetches more once everything already loaded is on screen.
