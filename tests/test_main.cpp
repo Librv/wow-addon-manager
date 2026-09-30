@@ -10,6 +10,7 @@
 #include "core/config.hpp"
 #include "core/toc_reader.hpp"
 #include "core/reconciler.hpp"
+#include "core/flavor_cache.hpp"
 
 #include <zip.h>
 #include <iostream>
@@ -457,6 +458,57 @@ void testParseFilesPage() {
     check(last.index == 4 && !last.hasMore(), "the final page reports no more");
 }
 
+void testFlavorCache(const fs::path& workDir) {
+    setenv("XDG_CONFIG_HOME", (workDir / "cfg_cache").string().c_str(), 1);
+    check(FlavorCache::load().all().empty(), "a missing flavors.json loads as an empty cache");
+
+    FlavorCache c;
+    c.merge({{10, "Retail", "wow-retail"}, {40, "Forever", "wow-forever"}});
+    check(c.all().size() == 2 && c.all()[1].slug == "wow-forever" && c.all()[1].name == "Forever" && c.all()[1].apiName == "Forever",
+          "merge adds new flavors keyed by CurseForge's slug, in the API's order");
+    check(c.nameFor(40) == "Forever" && c.nameFor(999, "?") == "?", "nameFor looks a display name up by id, with a fallback");
+
+    check(c.rename("wow-forever", "WoW Forever") && c.nameFor(40) == "WoW Forever", "rename changes the display name");
+    check(!c.rename("nope", "x"), "renaming an unknown key reports failure");
+
+    // CurseForge renames things and reissues ids: the user's edit survives, the rest follows.
+    c.merge({{10, "Retail (Midnight)", "wow-retail"}, {41, "Forever", "wow-forever"}});
+    check(c.findById(10)->name == "Retail (Midnight)" && c.findById(10)->apiName == "Retail (Midnight)",
+          "an unedited name follows CurseForge's rename");
+    check(c.nameFor(41) == "WoW Forever" && !c.findById(40).has_value() && c.findById(41)->apiName == "Forever",
+          "an edited name is kept while the id and CurseForge's name are refreshed");
+
+    check(c.rename("wow-forever", "") && c.nameFor(41) == "Forever", "an empty name resets to CurseForge's");
+
+    c.rename("wow-forever", "Ever");
+    c.merge({{10, "Retail (Midnight)", "wow-retail"}}); // Forever vanished upstream
+    check(c.findById(41).has_value() && c.all().size() == 2, "a flavor CurseForge stops listing is kept");
+
+    c.save();
+    auto back = FlavorCache::load();
+    check(back.all().size() == 2 && back.all()[0].slug == "wow-retail" && back.nameFor(41) == "Ever" && back.findById(41)->apiName == "Forever",
+          "the cache round-trips through flavors.json, order and edits included");
+
+    auto types = back.asTypes();
+    check(types.size() == 2 && types[1].name == "Ever" && types[1].slug == "wow-forever" && types[1].id == 41,
+          "asTypes exposes display names for matching");
+
+    // Hand-edited short form and a damaged file.
+    writeFile(FlavorCache::path(), R"({"wow-retail": "Live", "wow-forever": {"id": 41, "name": "Ever", "api_name": "Forever"}})");
+    auto hand = FlavorCache::load();
+    check(hand.all().size() == 2 && hand.all()[0].name == "Live" && hand.all()[0].id == 0,
+          "a hand-written \"key\": \"name\" entry loads with the name and no id yet");
+    hand.merge({{10, "Retail", "wow-retail"}});
+    check(hand.findById(10).has_value() && hand.nameFor(10) == "Live" && hand.findById(10)->apiName == "Retail",
+          "merge fills in the id of a hand-written entry and keeps the name you typed");
+
+    writeFile(FlavorCache::path(), "{ not json");
+    check(FlavorCache::load().all().empty(), "a damaged flavors.json loads as empty instead of throwing");
+
+    GameVersionType noSlug{7, "Some New Flavor", ""};
+    check(FlavorCache::keyFor(noSlug) == "some-new-flavor", "a flavor with no slug gets a key made from its name");
+}
+
 void testNoApiKeyStillUsable(const fs::path& workDir) {
     // Core requirement from the plan: the app must stay usable for managing
     // already-installed addons with no API key and no network. Config with
@@ -618,6 +670,7 @@ int main() {
     testFlavorForFolder();
     testConfigFlavorRoundtrip(workDir);
     testParseFilesPage();
+    testFlavorCache(workDir);
     testNoApiKeyStillUsable(workDir);
     testTocReader(workDir);
     testReconciler(workDir);
