@@ -6,6 +6,8 @@
 #include "core/config.hpp"
 #include "core/curseforge_client.hpp"
 #include "core/state_store.hpp"
+#include "core/flavor_cache.hpp"
+#include "gui/flavors_model.hpp"
 #include "gui/scan_results_model.hpp"
 #include <QStringList>
 
@@ -42,7 +44,8 @@ public slots:
     void setWowFlavor(qint64 flavorTypeId);
 
     void search(const QString& query);
-    void listGameVersionTypes();
+    // Renames a flavor in the cache (an empty name resets it to CurseForge's).
+    void renameFlavor(const QString& slug, const QString& name);
     void getFiles(qint64 modId, qint64 flavorTypeId);
 
     // One page of a mod's files for a flavor, for the install dialog. Emits
@@ -99,7 +102,7 @@ signals:
     void errorOccurred(const QString& context, const QString& message);
 
     void searchFinished(const QString& query, const QList<wam::CurseForgeMod>& results);
-    void gameVersionTypesLoaded(const QList<wam::GameVersionType>& types);
+    void flavorsChanged(const QList<wam::gui::FlavorInfo>& flavors);
     void filesLoaded(qint64 modId, const QList<wam::CurseForgeFile>& files);
     void installFilesLoaded(qint64 modId, qint64 flavorTypeId, int index,
                             const QList<wam::CurseForgeFile>& files, int totalCount);
@@ -135,13 +138,18 @@ private:
     wam::CurseForgeClient* requireClient(const char* context);
 
     void emitConfig();
-    // If a key and a WoW folder are set but no flavor is known yet, tries to
-    // work it out from the folder name. Best effort: needs the flavor list.
+    void emitFlavors();
+    // Fetches CurseForge's flavor list and folds it into the cache. Silent on
+    // failure: the cache on disk keeps working.
+    void refreshFlavors();
+    // If a WoW folder is set but no flavor is known yet, tries to work it out
+    // from the folder name and the flavor cache.
     void detectFlavor();
 
     wam::Config config_;
     std::optional<wam::CurseForgeClient> client_;
     wam::StateStore state_;
+    wam::FlavorCache flavors_;
 };
 
 } // namespace wam::gui

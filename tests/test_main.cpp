@@ -494,6 +494,7 @@ void testFlavorCache(const fs::path& workDir) {
     auto types = back.asTypes();
     check(types.size() == 2 && types[1].name == "Ever" && types[1].slug == "wow-forever" && types[1].id == 41,
           "asTypes exposes display names for matching");
+    check(back.asTypes(true)[1].name == "Forever", "asTypes(true) exposes CurseForge's own names instead");
 
     // Hand-edited short form and a damaged file.
     writeFile(FlavorCache::path(), R"({"wow-retail": "Live", "wow-forever": {"id": 41, "name": "Ever", "api_name": "Forever"}})");

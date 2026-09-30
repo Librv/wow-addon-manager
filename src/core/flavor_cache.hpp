@@ -45,8 +45,9 @@ public:
     std::optional<FlavorEntry> findById(int64_t id) const;
     // The display name for an id, or `fallback` if it is not in the cache.
     std::string nameFor(int64_t id, const std::string& fallback = {}) const;
-    // The entries as GameVersionTypes (name = display name), for matching.
-    std::vector<GameVersionType> asTypes() const;
+    // The entries as GameVersionTypes, for matching. name is the display name,
+    // or CurseForge's own name if apiNames is true.
+    std::vector<GameVersionType> asTypes(bool apiNames = false) const;
 
     // The key used for a flavor: CurseForge's slug, or a slug made from its
     // name when CurseForge gives none.

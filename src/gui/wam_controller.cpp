@@ -5,8 +5,8 @@
 namespace wam::gui {
 
 namespace {
-QVariantMap flavorMap(const wam::GameVersionType& t) {
-    return {{"id", static_cast<qint64>(t.id)}, {"name", QString::fromStdString(t.name)}};
+QVariantMap flavorMap(const FlavorInfo& f) {
+    return {{"id", f.id}, {"name", f.name}};
 }
 } // namespace
 
@@ -26,18 +26,17 @@ WamController::WamController(QObject* parent) : QObject(parent) {
                 wowFlavorName_ = flavorName;
                 emit configChanged();
                 // The client caches this, so repeat requests cost no network.
-                if (hasKey) {
-                    QMetaObject::invokeMethod(worker_, "listGameVersionTypes", Qt::QueuedConnection);
-                    // No-op when every addon already has an icon.
-                    QMetaObject::invokeMethod(worker_, "backfillIcons", Qt::QueuedConnection);
-                }
+                // No-op when every addon already has an icon.
+                if (hasKey) QMetaObject::invokeMethod(worker_, "backfillIcons", Qt::QueuedConnection);
             });
 
-    connect(worker_, &WamWorker::gameVersionTypesLoaded, this,
-            [this](const QList<wam::GameVersionType>& types) {
-                flavorTypes_ = types;
-                emit flavorsChanged();
-            });
+    connect(worker_, &WamWorker::flavorsChanged, this, [this](const QList<wam::gui::FlavorInfo>& flavors) {
+        flavorEntries_.setEntries(flavors);
+        QHash<qint64, QString> names;
+        for (const auto& f : flavors) names.insert(f.id, f.name);
+        installedAddons_.setFlavorNames(names); // rows show the current display name
+        emit flavorsChanged();
+    });
 
     connect(worker_, &WamWorker::errorOccurred, this, &WamController::errorOccurred);
 
@@ -115,17 +114,16 @@ WamController::~WamController() {
 
 QVariantList WamController::flavors() const {
     QVariantList out;
-    for (const auto& t : flavorTypes_) out.push_back(flavorMap(t));
+    for (const auto& f : flavorEntries_.entries()) out.push_back(flavorMap(f));
     return out;
 }
 
 QVariantList WamController::flavorsForInstall(qint64 modId) const {
     const auto ids = searchResults_.flavorIdsFor(modId);
+    if (ids.isEmpty()) return flavors(); // not in the search results, or the mod reports none: offer everything
     QVariantList out;
-    for (const auto& t : flavorTypes_) {
-        const qint64 id = static_cast<qint64>(t.id);
-        if (ids.contains(id) || id == wowFlavorId_) out.push_back(flavorMap(t));
-    }
+    for (const auto& f : flavorEntries_.entries())
+        if (ids.contains(f.id) || f.id == wowFlavorId_) out.push_back(flavorMap(f));
     return out.isEmpty() ? flavors() : out;
 }
 
@@ -140,6 +138,11 @@ void WamController::search(const QString& query) {
 }
 void WamController::setWowFlavor(qint64 flavorTypeId) {
     QMetaObject::invokeMethod(worker_, "setWowFlavor", Qt::QueuedConnection, Q_ARG(qint64, flavorTypeId));
+}
+
+void WamController::renameFlavor(const QString& slug, const QString& name) {
+    QMetaObject::invokeMethod(worker_, "renameFlavor", Qt::QueuedConnection,
+                              Q_ARG(QString, slug), Q_ARG(QString, name));
 }
 
 void WamController::loadInstallFiles(qint64 modId, qint64 flavorTypeId) {

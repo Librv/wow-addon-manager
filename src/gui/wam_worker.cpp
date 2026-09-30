@@ -32,15 +32,6 @@ std::optional<int64_t> optId(qint64 id) {
     return id != 0 ? std::optional<int64_t>(id) : std::nullopt;
 }
 
-std::string flavorNameFor(CurseForgeClient& c, qint64 id) {
-    if (id == 0) return {};
-    try {
-        for (const auto& t : c.listGameVersionTypes())
-            if (t.id == id) return t.name;
-    } catch (const std::exception&) {}
-    return {};
-}
-
 } // namespace
 
 WamWorker::WamWorker(QObject* parent) : QObject(parent) {}
@@ -61,17 +52,36 @@ void WamWorker::emitConfig() {
                        QString::fromStdString(config_.wow_flavor_name.value_or("")));
 }
 
-void WamWorker::detectFlavor() {
-    if (!client_ || !config_.wow_path.has_value() || config_.wow_flavor_id.has_value()) return;
+void WamWorker::emitFlavors() {
+    QList<FlavorInfo> out;
+    for (const auto& e : flavors_.all())
+        out.push_back({static_cast<qint64>(e.id), QString::fromStdString(e.slug),
+                       QString::fromStdString(e.name), QString::fromStdString(e.apiName)});
+    emit flavorsChanged(out);
+}
+
+void WamWorker::refreshFlavors() {
+    if (!client_) return;
     try {
-        const auto types = client_->listGameVersionTypes();
-        const auto id = CurseForgeClient::matchFlavorForFolder(types, config_.wowFolderName());
-        if (!id.has_value()) return; // unknown folder name: the user picks one in Settings
-        config_.wow_flavor_id = *id;
-        for (const auto& t : types) if (t.id == *id) config_.wow_flavor_name = t.name;
-        config_.save();
-        emitConfig();
-    } catch (const std::exception&) {} // no network: try again next start or when the path changes
+        flavors_.merge(client_->listGameVersionTypes());
+        flavors_.save();
+        emitFlavors();
+    } catch (const std::exception&) {} // offline: whatever is on disk stays in use
+}
+
+void WamWorker::detectFlavor() {
+    if (!config_.wow_path.has_value() || config_.wow_flavor_id.has_value()) return;
+    if (flavors_.all().empty()) refreshFlavors(); // first run, or the file was removed
+    // Match the names as shown first, then CurseForge's own, so renaming a
+    // flavor in Settings does not stop its folder from being recognised.
+    const std::string folder = config_.wowFolderName();
+    auto id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(), folder);
+    if (!id.has_value()) id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(true), folder);
+    if (!id.has_value()) return; // unknown folder name: the user picks one in Settings
+    config_.wow_flavor_id = *id;
+    config_.wow_flavor_name = flavors_.nameFor(*id);
+    config_.save();
+    emitConfig();
 }
 
 void WamWorker::initialize() {
@@ -99,8 +109,11 @@ void WamWorker::initialize() {
         }
     }
 
+    flavors_ = FlavorCache::load();
+    emitFlavors();  // the cached flavors are usable before (or without) the network
     emitConfig();
     emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+    refreshFlavors();
     detectFlavor();
 }
 
@@ -109,6 +122,7 @@ void WamWorker::setApiKey(const QString& key) {
     config_.save();
     client_.emplace(*config_.curseforge_api_key);
     emitConfig();
+    refreshFlavors();
     detectFlavor();
 }
 
@@ -127,7 +141,7 @@ void WamWorker::setWowFlavor(qint64 flavorTypeId) {
         config_.wow_flavor_name.reset();
     } else {
         config_.wow_flavor_id = flavorTypeId;
-        config_.wow_flavor_name = client_ ? flavorNameFor(*client_, flavorTypeId) : std::string();
+        config_.wow_flavor_name = flavors_.nameFor(flavorTypeId);
     }
     config_.save();
     emitConfig();
@@ -144,14 +158,19 @@ void WamWorker::search(const QString& query) {
     }
 }
 
-void WamWorker::listGameVersionTypes() {
-    auto* client = requireClient("listGameVersionTypes");
-    if (!client) return;
-    try {
-        emit gameVersionTypesLoaded(toQList<wam::GameVersionType>(client->listGameVersionTypes()));
-    } catch (const std::exception& e) {
-        emit errorOccurred("listGameVersionTypes", QString::fromStdString(e.what()));
+void WamWorker::renameFlavor(const QString& slug, const QString& name) {
+    if (!flavors_.rename(slug.toStdString(), name.trimmed().toStdString())) {
+        emit errorOccurred("renameFlavor", "Unknown flavor '" + slug + "'.");
+        return;
     }
+    flavors_.save();
+    // The WoW folder's flavor is stored with its display name.
+    if (config_.wow_flavor_id.has_value()) {
+        config_.wow_flavor_name = flavors_.nameFor(*config_.wow_flavor_id, config_.wow_flavor_name.value_or(""));
+        config_.save();
+        emitConfig();
+    }
+    emitFlavors();
 }
 
 void WamWorker::getFiles(qint64 modId, qint64 flavorTypeId) {
@@ -225,7 +244,7 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
         rec.iconUrl = !mod.logoUrl.empty() ? mod.logoUrl : (existing ? existing->iconUrl : std::string());
         if (flavorTypeId != 0) {
             rec.flavorTypeId = flavorTypeId;
-            rec.flavorName = flavorNameFor(*client, flavorTypeId);
+            rec.flavorName = flavors_.nameFor(flavorTypeId);
         } else if (existing.has_value()) {
             rec.flavorTypeId = existing->flavorTypeId;
             rec.flavorName = existing->flavorName;
@@ -275,7 +294,7 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
         }
         if (flavorTypeId != 0) {
             rec.flavorTypeId = flavorTypeId;
-            rec.flavorName = client_ ? flavorNameFor(*client_, flavorTypeId) : std::string();
+            rec.flavorName = flavors_.nameFor(flavorTypeId);
         }
 
         rec.folders = AddonInstaller::installZip(zip, config_.addonsDir(),
@@ -401,7 +420,7 @@ void WamWorker::setFlavor(qint64 modId, qint64 flavorTypeId) {
     }
     InstalledAddon rec = *existing;
     rec.flavorTypeId = flavorTypeId;
-    rec.flavorName = client_ ? flavorNameFor(*client_, flavorTypeId) : std::string();
+    rec.flavorName = flavors_.nameFor(flavorTypeId);
     state_.upsert(rec);
     state_.save();
     emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));

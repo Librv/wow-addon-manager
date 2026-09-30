@@ -4,6 +4,7 @@
 #include "core/curseforge_client.hpp"
 #include "core/state_store.hpp"
 #include "gui/scan_results_model.hpp"
+#include "gui/flavors_model.hpp"
 
 Q_DECLARE_METATYPE(wam::CurseForgeMod)
 Q_DECLARE_METATYPE(wam::CurseForgeFile)
@@ -22,6 +23,8 @@ inline void registerMetaTypes() {
     qRegisterMetaType<wam::CurseForgeFile>();
     qRegisterMetaType<wam::GameVersionType>();
     qRegisterMetaType<wam::InstalledAddon>();
+    qRegisterMetaType<wam::gui::FlavorInfo>();
+    qRegisterMetaType<QList<wam::gui::FlavorInfo>>();
     qRegisterMetaType<wam::gui::ScanGroup>();
     qRegisterMetaType<QList<wam::gui::ScanGroup>>();
     qRegisterMetaType<QList<wam::CurseForgeMod>>();

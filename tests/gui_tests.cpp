@@ -9,6 +9,8 @@
 #include "gui/scan_results_model.hpp"
 #include "gui/toc_text.hpp"
 #include "gui/install_files_model.hpp"
+#include "gui/flavors_model.hpp"
+#include "core/flavor_cache.hpp"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -185,6 +187,45 @@ void testInstallFileFromCurseForge() {
           "a missing display name falls back to the file name, and a bad date to empty");
 }
 
+void testFlavorsModel() {
+    FlavorsModel m;
+    int counts = 0;
+    QObject::connect(&m, &FlavorsModel::countChanged, [&] { ++counts; });
+    m.setEntries({{10, "wow-retail", "Retail", "Retail"}, {40, "wow-forever", "Ever", "Forever"}});
+    check(m.rowCount() == 2 && counts == 1, "the flavor model holds the entries and reports a new count");
+    check(m.data(m.index(1), FlavorsModel::SlugRole).toString() == "wow-forever" &&
+          m.data(m.index(1), FlavorsModel::NameRole).toString() == "Ever" &&
+          m.data(m.index(1), FlavorsModel::FlavorIdRole).toLongLong() == 40, "slug, name and id roles");
+    check(m.data(m.index(1), FlavorsModel::EditedRole).toBool() && !m.data(m.index(0), FlavorsModel::EditedRole).toBool(),
+          "a name that differs from CurseForge's is marked as edited");
+
+    int resets = 0, changed = 0;
+    QObject::connect(&m, &QAbstractItemModel::modelReset, [&] { ++resets; });
+    QObject::connect(&m, &QAbstractItemModel::dataChanged, [&] { ++changed; });
+    m.setEntries({{10, "wow-retail", "Retail", "Retail"}, {40, "wow-forever", "Forever", "Forever"}});
+    check(resets == 0 && changed == 1 && !m.data(m.index(1), FlavorsModel::EditedRole).toBool(),
+          "renaming keeps the rows (so a text field being edited survives) and only updates their data");
+    m.setEntries({{10, "wow-retail", "Retail", "Retail"}});
+    check(resets == 1 && m.rowCount() == 1 && counts == 2, "a different set of flavors resets the model");
+}
+
+void testInstalledFlavorNames() {
+    InstalledAddonsModel m;
+    InstalledAddon a; a.modId = 1; a.flavorTypeId = 40; a.flavorName = "Old name";
+    InstalledAddon b; b.modId = 2; b.flavorTypeId = 99; b.flavorName = "Stored";
+    InstalledAddon c; c.modId = 3; // flavor unknown
+    m.setAddons({a, b, c});
+    check(m.data(m.index(0), InstalledAddonsModel::FlavorNameRole).toString() == "Old name", "without a cache the stored flavor name is shown");
+    m.setFlavorNames({{40, "Forever"}});
+    check(m.data(m.index(0), InstalledAddonsModel::FlavorNameRole).toString() == "Forever",
+          "a name from the flavor cache replaces the one stored at install time");
+    check(m.data(m.index(1), InstalledAddonsModel::FlavorNameRole).toString() == "Stored" &&
+          m.data(m.index(2), InstalledAddonsModel::FlavorNameRole).toString().isEmpty(),
+          "a flavor missing from the cache falls back to the stored name, and an unknown one stays empty");
+    m.setAddons({a}); // a list refresh must not lose the names
+    check(m.data(m.index(0), InstalledAddonsModel::FlavorNameRole).toString() == "Forever", "cached names survive a list reload");
+}
+
 void testSearchResultsModel() {
     SearchResultsModel m;
     CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo";
@@ -239,6 +280,14 @@ void testControllerEndToEnd() {
             R"("manuallyProvided":false,"flavorTypeId":517,"flavorName":"Retail"}]})");
     f.close();
 
+    // A flavor cache from an earlier run, with one name the user edited.
+    {
+        wam::FlavorCache cache;
+        cache.merge({{10, "Retail", "wow-retail"}, {40, "Forever", "wow-forever"}});
+        cache.rename("wow-forever", "Ever");
+        cache.save();
+    }
+
     QString errContext, errMessage;
     {
         WamController c;
@@ -250,6 +299,9 @@ void testControllerEndToEnd() {
         check(c.installedAddons()->data(c.installedAddons()->index(0),
                                         InstalledAddonsModel::FlavorNameRole).toString() == "Retail",
               "the stored flavor survives the cross-thread round trip");
+        check(c.flavorEntries()->rowCount() == 2 && c.flavors().size() == 2,
+              "flavors cached on disk are available at startup with no API key and no network");
+        check(c.flavors()[1].toMap().value("name").toString() == "Ever", "the cached display name is what the flavor list shows");
         check(!c.hasApiKey() && !c.hasWowPath(), "no key or path configured on a fresh config");
         check(c.wowFlavorId() == 0 && c.wowFlavorName().isEmpty(), "no WoW flavor is known on a fresh config");
 
@@ -268,6 +320,18 @@ void testControllerEndToEnd() {
         c.setWowPath(tmp.path() + "/wow");
         check(waitFor([&] { return c.hasWowPath(); }), "setting the WoW path reaches the controller");
         check(c.wowFlavorId() == 0, "without an API key the flavor cannot be worked out, and stays unknown");
+
+        // A folder named after a cached flavor is recognised from the cache alone.
+        QDir().mkpath(tmp.path() + "/wow_forever/_forever_");
+        c.setWowPath(tmp.path() + "/wow_forever/_forever_");
+        check(waitFor([&] { return c.wowFlavorId() == 40; }), "the WoW folder's flavor is worked out from the cache with no network");
+        check(c.wowFlavorName() == "Ever", "and it is stored with its display name");
+        c.renameFlavor("wow-forever", "Forever!");
+        check(waitFor([&] { return c.wowFlavorName() == "Forever!"; }), "renaming a flavor updates the WoW folder's stored flavor name");
+        check(c.flavors()[1].toMap().value("name").toString() == "Forever!", "and the flavor list");
+        check(wam::FlavorCache::load().nameFor(40) == "Forever!", "and flavors.json on disk");
+        c.setWowPath(tmp.path() + "/wow");
+        check(waitFor([&] { return !c.wowFlavorId() && c.hasWowPath(); }), "a folder that names no flavor leaves it unknown");
 
         c.setWowFlavor(517); // a manual choice works without a key; the name lookup just comes back empty
         check(waitFor([&] { return c.wowFlavorId() == 517; }), "a flavor picked by hand is stored and reaches the controller");
@@ -325,6 +389,8 @@ int main(int argc, char** argv) {
     testCleanTocText();
     testInstallFilesModel();
     testInstallFileFromCurseForge();
+    testFlavorsModel();
+    testInstalledFlavorNames();
     testSearchResultsModel();
     testInstalledAddonsModel();
     testControllerEndToEnd();
