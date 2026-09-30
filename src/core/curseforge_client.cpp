@@ -278,6 +278,46 @@ FilesPage CurseForgeClient::getFilesPage(int64_t modId, std::optional<int64_t> g
     return parseFilesPage(resp.body);
 }
 
+std::vector<CurseForgeFile> CurseForgeClient::getFilesByIds(const std::vector<int64_t>& fileIds) {
+    if (fileIds.empty()) return {};
+    json body;
+    body["fileIds"] = fileIds;
+    auto headers = authHeaders();
+    headers.push_back("Content-Type: application/json");
+    auto resp = HttpClient::post(std::string(kBaseUrl) + "/mods/files", body.dump(), headers);
+    if (!resp.ok()) throwFor(resp, "getFilesByIds()");
+    return parseFileList(resp.body);
+}
+
+std::vector<CurseForgeFile> CurseForgeClient::parseFileList(const std::string& jsonBody) {
+    json j = json::parse(jsonBody);
+    std::vector<CurseForgeFile> out;
+    for (const auto& f : j.at("data")) out.push_back(parseFile(f));
+    return out;
+}
+
+std::string CurseForgeClient::getFileChangelog(int64_t modId, int64_t fileId) {
+    std::ostringstream url;
+    url << kBaseUrl << "/mods/" << modId << "/files/" << fileId << "/changelog";
+    auto resp = HttpClient::get(url.str(), authHeaders());
+    if (!resp.ok()) throwFor(resp, "getFileChangelog(" + std::to_string(modId) + "," + std::to_string(fileId) + ")");
+    return parseChangelog(resp.body);
+}
+
+std::string CurseForgeClient::parseChangelog(const std::string& jsonBody) {
+    json j = json::parse(jsonBody);
+    return stringOrEmpty(j, "data");
+}
+
+std::string CurseForgeClient::browserDownloadUrl(int64_t modId, int64_t fileId) {
+    return "https://www.curseforge.com/api/v1/mods/" + std::to_string(modId) + "/files/" +
+           std::to_string(fileId) + "/download";
+}
+
+std::string CurseForgeClient::modPageUrl(const std::string& slug) {
+    return "https://www.curseforge.com/wow/addons/" + slug;
+}
+
 FilesPage CurseForgeClient::parseFilesPage(const std::string& jsonBody) {
     json j = json::parse(jsonBody);
     FilesPage page;

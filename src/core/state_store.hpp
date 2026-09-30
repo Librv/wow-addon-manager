@@ -26,7 +26,16 @@ struct InstalledAddon {
     int64_t flavorTypeId = 0;         // CurseForge gameVersionTypeId picked at install; 0 = unknown (adopted/legacy)
     std::string flavorName;           // display name captured at install time
     std::string iconUrl;              // CurseForge logo thumbnail; empty until known (backfilled by the GUI)
+    std::string fileDisplayName;      // CurseForge's name for the installed file, e.g. "v9.3.2"; empty until known
+    std::string fileDate;             // when that file was uploaded (ISO-8601); empty until known
+    std::string modSlug;              // CurseForge page slug; empty until known (adopted addons have none)
+    bool adopted = false;             // recorded from an existing folder rather than installed by wam
 };
+
+// Records which CurseForge file an addon is now at: id, names, upload date,
+// release channel and game versions. Leaves folders, flavor and the install
+// time alone.
+void recordFile(InstalledAddon& addon, const CurseForgeFile& file);
 
 // installed.json lives at Config::dataDir()/installed.json. This is the
 // app's own record of what it put where, independent of the game folder

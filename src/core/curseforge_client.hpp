@@ -76,6 +76,13 @@ public:
     std::vector<CurseForgeFile> getFiles(int64_t modId, std::optional<int64_t> gameVersionTypeId = std::nullopt);
     CurseForgeFile getFile(int64_t modId, int64_t fileId);
 
+    // Several files at once, across any mods (POST /v1/mods/files). Unknown
+    // ids are simply absent from the result.
+    std::vector<CurseForgeFile> getFilesByIds(const std::vector<int64_t>& fileIds);
+
+    // A file's changelog, as the HTML CurseForge stores (see htmlToPlainText).
+    std::string getFileChangelog(int64_t modId, int64_t fileId);
+
     // One page of the file list (the API allows at most 50 per page). The
     // order within and across pages is whatever the API returns; callers that
     // need newest-first sort what they have loaded.
@@ -119,6 +126,16 @@ public:
     static CurseForgeMod parseModObject(const std::string& jsonBody);
     // parseFilesPage: {"data":[file,...],"pagination":{"index":0,"totalCount":N,...}}
     static FilesPage parseFilesPage(const std::string& jsonBody);
+    // parseFileList: {"data":[file,...]}   parseChangelog: {"data":"<html>"}
+    static std::vector<CurseForgeFile> parseFileList(const std::string& jsonBody);
+    static std::string parseChangelog(const std::string& jsonBody);
+
+    // Where a person's browser gets a file from, for downloads the author has
+    // blocked for third-party tools. This is the website's own endpoint, not
+    // part of the documented API.
+    static std::string browserDownloadUrl(int64_t modId, int64_t fileId);
+    // The addon's page on the website.
+    static std::string modPageUrl(const std::string& slug);
 
     static const int64_t kWowGameId = 1;
 

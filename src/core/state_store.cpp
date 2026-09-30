@@ -29,6 +29,10 @@ json toJson(const InstalledAddon& a) {
         {"flavorTypeId", a.flavorTypeId},
         {"flavorName", a.flavorName},
         {"iconUrl", a.iconUrl},
+        {"fileDisplayName", a.fileDisplayName},
+        {"fileDate", a.fileDate},
+        {"modSlug", a.modSlug},
+        {"adopted", a.adopted},
     };
 }
 
@@ -49,10 +53,23 @@ InstalledAddon fromJson(const json& j) {
     a.flavorTypeId = j.value("flavorTypeId", int64_t{0});
     a.flavorName = j.value("flavorName", "");
     a.iconUrl = j.value("iconUrl", "");
+    a.fileDisplayName = j.value("fileDisplayName", "");
+    a.fileDate = j.value("fileDate", "");
+    a.modSlug = j.value("modSlug", "");
+    a.adopted = j.value("adopted", false);
     return a;
 }
 
 } // namespace
+
+void recordFile(InstalledAddon& a, const CurseForgeFile& f) {
+    a.fileId = f.id;
+    a.fileName = f.fileName;
+    a.fileDisplayName = f.displayName;
+    a.fileDate = f.fileDate;
+    a.channel = f.releaseType;
+    a.gameVersions = f.gameVersions;
+}
 
 std::string nowIso8601() {
     auto t = std::time(nullptr);

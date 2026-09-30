@@ -22,6 +22,7 @@ add_library(wam_core
     src/core/http_client.cpp
     src/core/curseforge_client.cpp
     src/core/flavor_cache.cpp
+    src/core/html_text.cpp
     src/core/addon_installer.cpp
     src/core/state_store.cpp
     src/core/toc_reader.cpp
