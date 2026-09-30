@@ -51,6 +51,7 @@ if(WAM_BUILD_GUI)
         src/gui/pending_updates_model.cpp
         src/gui/scan_results_model.cpp
         src/gui/install_files_model.cpp
+        src/gui/flavors_model.cpp
     )
     target_include_directories(wam_gui PUBLIC src)
     target_link_libraries(wam_gui PUBLIC wam_core Qt6::Core Qt6::Gui Qt6::Qml)

@@ -21,9 +21,15 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     void setAddons(const QList<wam::InstalledAddon>& addons);
-
+    // Current display names by flavor id (from the flavor cache). A row shows
+    // this in preference to the name stored when it was installed, so a rename
+    // in Settings shows up everywhere.
+    void setFlavorNames(const QHash<qint64, QString>& names);
 private:
+    QString flavorNameFor(const wam::InstalledAddon& a) const;
+
     QList<wam::InstalledAddon> addons_;
+    QHash<qint64, QString> flavorNames_;
 };
 
 } // namespace wam::gui

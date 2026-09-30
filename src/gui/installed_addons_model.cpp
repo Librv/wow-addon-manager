@@ -28,7 +28,7 @@ QVariant InstalledAddonsModel::data(const QModelIndex& index, int role) const {
         case ChannelRole:          return channelName(a.channel);
         case InstalledAtRole:      return QString::fromStdString(a.installedAt);
         case ManuallyProvidedRole: return a.manuallyProvided;
-        case FlavorNameRole:       return QString::fromStdString(a.flavorName);
+        case FlavorNameRole:       return flavorNameFor(a);
         case FlavorTypeIdRole:     return static_cast<qint64>(a.flavorTypeId);
         case IconUrlRole:          return QString::fromStdString(a.iconUrl);
         case FoldersRole: {
@@ -47,6 +47,15 @@ QHash<int, QByteArray> InstalledAddonsModel::roleNames() const {
         {ManuallyProvidedRole, "manuallyProvided"}, {FoldersRole, "folders"},
         {FlavorNameRole, "flavorName"}, {FlavorTypeIdRole, "flavorTypeId"}, {IconUrlRole, "iconUrl"},
     };
+}
+
+QString InstalledAddonsModel::flavorNameFor(const wam::InstalledAddon& a) const {
+    return flavorNames_.value(static_cast<qint64>(a.flavorTypeId), QString::fromStdString(a.flavorName));
+}
+
+void InstalledAddonsModel::setFlavorNames(const QHash<qint64, QString>& names) {
+    flavorNames_ = names;
+    if (!addons_.isEmpty()) emit dataChanged(index(0), index(addons_.size() - 1), {FlavorNameRole});
 }
 
 void InstalledAddonsModel::setAddons(const QList<wam::InstalledAddon>& addons) {

@@ -10,6 +10,7 @@
 #include "gui/pending_updates_model.hpp"
 #include "gui/scan_results_model.hpp"
 #include "gui/install_files_model.hpp"
+#include "gui/flavors_model.hpp"
 #include <QStringList>
 
 namespace wam::gui {
@@ -30,6 +31,7 @@ class WamController : public QObject {
     Q_PROPERTY(wam::gui::SearchResultsModel* searchResults READ searchResults CONSTANT)
     Q_PROPERTY(wam::gui::InstalledAddonsModel* installedAddons READ installedAddons CONSTANT)
     Q_PROPERTY(wam::gui::PendingUpdatesModel* pendingUpdates READ pendingUpdates CONSTANT)
+    Q_PROPERTY(wam::gui::FlavorsModel* flavorEntries READ flavorEntries CONSTANT)  // the editable flavor list
     Q_PROPERTY(wam::gui::InstallFilesModel* installFiles READ installFiles CONSTANT)
     Q_PROPERTY(wam::gui::ScanResultsModel* scanResults READ scanResults CONSTANT)
     Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
@@ -46,6 +48,7 @@ public:
     qint64 wowFlavorId() const { return wowFlavorId_; }
     QString wowFlavorName() const { return wowFlavorName_; }
     InstallFilesModel* installFiles() { return &installFiles_; }
+    FlavorsModel* flavorEntries() { return &flavorEntries_; }
     bool checkingUpdates() const { return checking_; }
     SearchResultsModel* searchResults() { return &searchResults_; }
     InstalledAddonsModel* installedAddons() { return &installedAddons_; }
@@ -65,6 +68,7 @@ public slots:
     void setWowPath(const QString& path);
     void search(const QString& query);
     void setWowFlavor(qint64 flavorTypeId); // 0 clears it
+    void renameFlavor(const QString& slug, const QString& name); // empty name = reset to CurseForge's
 
     // Install dialog: the version list for one addon and flavor.
     void loadInstallFiles(qint64 modId, qint64 flavorTypeId);
@@ -114,7 +118,7 @@ private:
     ScanResultsModel scanResults_;
     InstallFilesModel installFiles_;
     int autoInstallFetches_ = 0; // pages fetched in a row without the user asking, capped
-    QList<wam::GameVersionType> flavorTypes_;
+    FlavorsModel flavorEntries_;
     QHash<qint64, qint64> installFlavors_; // flavor picked per install, reused by the blocked/manual flow
 
     bool hasApiKey_ = false;

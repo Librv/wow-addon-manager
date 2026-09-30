@@ -100,9 +100,10 @@ std::string FlavorCache::nameFor(int64_t id, const std::string& fallback) const 
     return e ? e->name : fallback;
 }
 
-std::vector<GameVersionType> FlavorCache::asTypes() const {
+std::vector<GameVersionType> FlavorCache::asTypes(bool apiNames) const {
     std::vector<GameVersionType> out;
-    for (const auto& e : entries_) out.push_back({e.id, e.name, e.slug});
+    for (const auto& e : entries_)
+        out.push_back({e.id, apiNames && !e.apiName.empty() ? e.apiName : e.name, e.slug});
     return out;
 }
 
