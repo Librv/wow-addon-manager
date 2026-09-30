@@ -26,8 +26,8 @@ WamController::WamController(QObject* parent) : QObject(parent) {
                 wowFlavorName_ = flavorName;
                 emit configChanged();
                 // The client caches this, so repeat requests cost no network.
-                // No-op when every addon already has an icon.
-                if (hasKey) QMetaObject::invokeMethod(worker_, "backfillIcons", Qt::QueuedConnection);
+                // No-op when every addon already has its icon, slug and file details.
+                if (hasKey) QMetaObject::invokeMethod(worker_, "backfillDetails", Qt::QueuedConnection);
             });
 
     connect(worker_, &WamWorker::flavorsChanged, this, [this](const QList<wam::gui::FlavorInfo>& flavors) {
@@ -78,7 +78,20 @@ WamController::WamController(QObject* parent) : QObject(parent) {
                 u.latestFileId = latest.id;
                 u.blocked = latest.isBlocked();
                 pendingUpdates_.add(u);
+                if (singleChecks_.contains(modId)) emit updateFound(modId);
             });
+    connect(worker_, &WamWorker::upToDate, this, [this](qint64 modId, const QString& name) {
+        pendingUpdates_.remove(modId); // a stale row for something that is current now
+        if (singleChecks_.contains(modId)) emit addonUpToDate(modId, name);
+    });
+    connect(worker_, &WamWorker::singleCheckFinished, this, [this](qint64 modId) { singleChecks_.remove(modId); });
+    connect(worker_, &WamWorker::linked, this, &WamController::linked);
+    connect(worker_, &WamWorker::changelogLoaded, this, [this](qint64 fileId, const QString& text) {
+        installedAddons_.setChangelog(fileId, "ready", text);
+    });
+    connect(worker_, &WamWorker::changelogFailed, this, [this](qint64 fileId, const QString& message) {
+        installedAddons_.setChangelog(fileId, "failed", message);
+    });
 
     connect(worker_, &WamWorker::updateApplied, this, [this](const wam::InstalledAddon& a) {
         pendingUpdates_.remove(a.modId);
@@ -196,6 +209,34 @@ void WamController::installManual(qint64 modId, qint64 fileId, const QString& zi
 void WamController::setFlavor(qint64 modId, qint64 flavorTypeId) {
     QMetaObject::invokeMethod(worker_, "setFlavor", Qt::QueuedConnection,
                               Q_ARG(qint64, modId), Q_ARG(qint64, flavorTypeId));
+}
+
+QString WamController::downloadUrl(qint64 modId, qint64 fileId) const {
+    return QString::fromStdString(wam::CurseForgeClient::browserDownloadUrl(modId, fileId));
+}
+
+QString WamController::modPageUrl(const QString& slug) const {
+    return QString::fromStdString(wam::CurseForgeClient::modPageUrl(slug.toStdString()));
+}
+
+void WamController::checkUpdate(qint64 modId) {
+    singleChecks_.insert(modId);
+    QMetaObject::invokeMethod(worker_, "checkOneUpdate", Qt::QueuedConnection, Q_ARG(qint64, modId));
+}
+
+void WamController::loadChangelog(qint64 modId) {
+    const qint64 fileId = installedAddons_.fileIdFor(modId);
+    if (fileId == 0) return; // adopted and not linked: there is no file to ask about
+    const QString state = installedAddons_.changelogState(fileId);
+    if (state == "loading" || state == "ready") return; // a failed one may be retried
+    installedAddons_.setChangelog(fileId, "loading", {});
+    QMetaObject::invokeMethod(worker_, "loadChangelog", Qt::QueuedConnection,
+                              Q_ARG(qint64, modId), Q_ARG(qint64, fileId));
+}
+
+void WamController::linkFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
+    QMetaObject::invokeMethod(worker_, "linkFile", Qt::QueuedConnection,
+                              Q_ARG(qint64, modId), Q_ARG(qint64, fileId), Q_ARG(qint64, flavorTypeId));
 }
 
 void WamController::checkAllUpdates() {

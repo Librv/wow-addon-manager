@@ -226,6 +226,53 @@ void testInstalledFlavorNames() {
     check(m.data(m.index(0), InstalledAddonsModel::FlavorNameRole).toString() == "Forever", "cached names survive a list reload");
 }
 
+void testInstalledRowTexts() {
+    InstalledAddonsModel m;
+    InstalledAddon adopted; adopted.modId = 1; adopted.adopted = true; adopted.installedAt = "2026-09-29T21:14:00Z";
+    InstalledAddon linked;  linked.modId = 2; linked.fileId = 9006004; linked.fileDisplayName = "v9.3.2";
+    linked.fileName = "EllesmereUI-v9.3.2.zip"; linked.channel = ReleaseChannel::Beta;
+    linked.flavorTypeId = 10; linked.flavorName = "Retail"; linked.fileDate = "2026-09-29T14:03:11.5Z";
+    linked.modSlug = "ellesmere"; linked.installedAt = "2026-09-29T21:14:00Z";
+    InstalledAddon bare; bare.modId = 3; bare.fileId = 5; bare.fileName = "Bare-1.zip"; // legacy: no details
+    InstalledAddon both; both.modId = 4; both.fileId = 6; both.adopted = true; both.fileName = "x.zip";
+    InstalledAddon manual; manual.modId = 5; manual.fileId = 7; manual.manuallyProvided = true; manual.fileName = "m.zip";
+    m.setAddons({adopted, linked, bare, both, manual});
+
+    auto role = [&](int row, int r) { return m.data(m.index(row), r).toString(); };
+    check(role(0, InstalledAddonsModel::DescriptionRole) == QString("Adopted from your AddOns folder \u00b7 Release \u00b7 flavor not set"),
+          "an adopted addon's description says so and that its flavor is not set");
+    check(!m.data(m.index(0), InstalledAddonsModel::LinkedRole).toBool() &&
+          role(0, InstalledAddonsModel::VersionTextRole) == "Unknown until its first update" &&
+          role(0, InstalledAddonsModel::SourceTextRole) == "Adopted from an existing folder",
+          "an adopted addon is not linked, its version is unknown and its source says where it came from");
+    check(role(1, InstalledAddonsModel::DescriptionRole) == QString("v9.3.2 \u00b7 Beta \u00b7 Retail \u00b7 Sep 29, 2026"),
+          "a linked addon's description is version, channel, flavor and release date");
+    check(m.data(m.index(1), InstalledAddonsModel::LinkedRole).toBool() && role(1, InstalledAddonsModel::ReleasedTextRole) == "Sep 29, 2026" &&
+          role(1, InstalledAddonsModel::ChannelTextRole) == "Beta" && role(1, InstalledAddonsModel::ModSlugRole) == "ellesmere" &&
+          role(1, InstalledAddonsModel::SourceTextRole) == "CurseForge download",
+          "a linked addon exposes its details and is a CurseForge download");
+    check(role(1, InstalledAddonsModel::InstalledTextRole).contains("2026") && role(0, InstalledAddonsModel::InstalledTextRole).contains("Sep"),
+          "the install time is formatted");
+    check(role(2, InstalledAddonsModel::DescriptionRole) == QString("Bare-1.zip \u00b7 Release"),
+          "an addon recorded before details existed falls back to its zip name and leaves out what is unknown");
+    check(role(3, InstalledAddonsModel::SourceTextRole) == "Adopted, linked to CurseForge", "an adopted addon that was linked says so");
+    check(role(4, InstalledAddonsModel::SourceTextRole) == "Manual file", "a manually installed addon says so");
+
+    m.setFlavorNames({{10, "Retail (Midnight)"}});
+    check(role(1, InstalledAddonsModel::DescriptionRole).contains("Retail (Midnight)"), "a flavor rename shows in the description");
+
+    check(m.fileIdFor(2) == 9006004 && m.fileIdFor(1) == 0 && m.fileIdFor(99) == 0, "fileIdFor finds an addon's file, or 0 when adopted or unknown");
+    check(role(1, InstalledAddonsModel::ChangelogStateRole) == "none", "no changelog has been asked for yet");
+    m.setChangelog(9006004, "loading", {});
+    check(role(1, InstalledAddonsModel::ChangelogStateRole) == "loading" && role(2, InstalledAddonsModel::ChangelogStateRole) == "none",
+          "a changelog's state belongs to its file only");
+    m.setChangelog(9006004, "ready", "Major features");
+    m.setAddons({linked}); // the list reloads after an update elsewhere
+    check(role(0, InstalledAddonsModel::ChangelogTextRole) == "Major features" && m.changelogState(9006004) == "ready",
+          "a loaded changelog survives a list reload");
+    check(role(0, InstalledAddonsModel::ChangelogStateRole) == "ready", "and the row shows it");
+}
+
 void testSearchResultsModel() {
     SearchResultsModel m;
     CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo";
@@ -372,6 +419,21 @@ void testControllerEndToEnd() {
         check(waitFor([&] { return errContext == "adopt"; }),
               "adopting a folder another mod owns is reported as an error");
 
+        // Per-addon actions without an API key fail cleanly instead of hanging.
+        errContext.clear();
+        c.checkUpdate(42);
+        check(waitFor([&] { return errContext == "checkUpdate"; }), "a single-addon update check without a key reports an error");
+        errContext.clear();
+        c.linkFile(42, 5, 517);
+        check(waitFor([&] { return errContext == "link"; }), "linking without a key reports an error");
+        c.loadChangelog(42);
+        check(waitFor([&] { return c.installedAddons()->changelogState(1) == "failed"; }),
+              "a changelog that cannot be fetched ends as failed, so the row can show it");
+        c.loadChangelog(0); // not an installed addon: nothing to do
+        check(c.downloadUrl(26886, 8875044) == "https://www.curseforge.com/api/v1/mods/26886/files/8875044/download",
+              "downloadUrl gives the website's direct download link");
+        check(c.modPageUrl("questie") == "https://www.curseforge.com/wow/addons/questie", "modPageUrl gives the addon page");
+
         c.applyUpdate(42); // nothing queued for this mod: a no-op, not a crash
         c.skipUpdate(42);
         check(c.pendingUpdates()->count() == 0, "apply/skip on an unqueued mod is a no-op");
@@ -391,6 +453,7 @@ int main(int argc, char** argv) {
     testInstallFileFromCurseForge();
     testFlavorsModel();
     testInstalledFlavorNames();
+    testInstalledRowTexts();
     testSearchResultsModel();
     testInstalledAddonsModel();
     testControllerEndToEnd();
