@@ -38,6 +38,7 @@ Kirigami.ApplicationWindow {
         if (query) page.runQuery(query)
     }
     function openScan() { scanDialog.open() }
+    function openInstall(modId, name, iconUrl) { installDialog.openFor(modId, name, iconUrl) }
     function showSettings() { showPage("SettingsPage.qml") }
     function checkUpdates() {
         if (!wam.checkingUpdates) {
@@ -92,6 +93,12 @@ Kirigami.ApplicationWindow {
             if (available > 0) updatesDialog.open()
             else root.showPassiveNotification(qsTr("All addons are up to date"))
         }
+    }
+
+    InstallDialog {
+        id: installDialog
+        onInstallStarted: (name) => root.showPassiveNotification(qsTr("Installing %1…").arg(name))
+        onSettingsRequested: root.showSettings()
     }
 
     ScanDialog {

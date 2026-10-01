@@ -38,6 +38,29 @@ bool containsCaseInsensitive(const std::string& haystack, const std::string& nee
     return toLower(haystack).find(toLower(needle)) != std::string::npos;
 }
 
+std::string stringOrEmpty(const json& j, const char* key) {
+    if (j.is_object() && j.contains(key) && j.at(key).is_string()) return j.at(key).get<std::string>();
+    return {};
+}
+
+int intOrDefault(const json& j, const char* key, int fallback) {
+    if (j.is_object() && j.contains(key) && j.at(key).is_number_integer()) return j.at(key).get<int>();
+    return fallback;
+}
+
+// Lowercases and turns every run of non-alphanumerics into one space:
+// "_classic_era_" and "classic-era" both become "classic era".
+std::string normalizeWords(const std::string& s) {
+    std::string out;
+    bool space = true; // no leading space
+    for (unsigned char c : s) {
+        if (std::isalnum(c)) { out += static_cast<char>(std::tolower(c)); space = false; }
+        else if (!space) { out += ' '; space = true; }
+    }
+    if (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
 CurseForgeFile parseFile(const json& f) {
     CurseForgeFile file;
     file.id = f.at("id").get<int64_t>();
@@ -46,6 +69,7 @@ CurseForgeFile parseFile(const json& f) {
     file.fileName = f.value("fileName", "");
     file.releaseType = static_cast<ReleaseChannel>(f.value("releaseType", 1));
     file.fileFingerprint = f.value("fileFingerprint", int64_t{0});
+    file.fileDate = stringOrEmpty(f, "fileDate");
 
     if (f.contains("downloadUrl") && !f.at("downloadUrl").is_null())
         file.downloadUrl = f.at("downloadUrl").get<std::string>();
@@ -58,11 +82,6 @@ CurseForgeFile parseFile(const json& f) {
             if (m.contains("name")) file.moduleNames.push_back(m.at("name").get<std::string>());
 
     return file;
-}
-
-std::string stringOrEmpty(const json& j, const char* key) {
-    if (j.is_object() && j.contains(key) && j.at(key).is_string()) return j.at(key).get<std::string>();
-    return {};
 }
 
 CurseForgeMod parseMod(const json& m) {
@@ -168,6 +187,23 @@ std::optional<int64_t> CurseForgeClient::matchFlavor(const std::vector<GameVersi
     return std::nullopt;
 }
 
+std::optional<int64_t> CurseForgeClient::matchFlavorForFolder(const std::vector<GameVersionType>& types,
+                                                               const std::string& folderName) {
+    std::istringstream words(normalizeWords(folderName));
+    std::string word, key;
+    bool testRealm = false;
+    while (words >> word) {
+        if (word == "ptr" || word == "xptr" || word == "beta" || word == "alpha") { testRealm = true; continue; }
+        key += (key.empty() ? "" : " ") + word;
+    }
+    // A bare "_ptr_", "_xptr_" or "_beta_" is the test realm of the main game.
+    if (key.empty() && testRealm) key = "retail";
+    if (key.empty()) return std::nullopt;
+    for (const auto& t : types)
+        if (normalizeWords(t.name) == key || normalizeWords(t.slug) == key) return t.id;
+    return std::nullopt;
+}
+
 std::optional<int64_t> CurseForgeClient::gameVersionTypeId(const std::string& flavorSubstring) {
     try {
         return matchFlavor(listGameVersionTypes(), flavorSubstring);
@@ -228,17 +264,31 @@ std::vector<CurseForgeMod> CurseForgeClient::getMods(const std::vector<int64_t>&
 }
 
 std::vector<CurseForgeFile> CurseForgeClient::getFiles(int64_t modId, std::optional<int64_t> gameVersionTypeId) {
+    return getFilesPage(modId, gameVersionTypeId, 0, 50).files;
+}
+
+FilesPage CurseForgeClient::getFilesPage(int64_t modId, std::optional<int64_t> gameVersionTypeId,
+                                         int index, int pageSize) {
     std::ostringstream url;
-    url << kBaseUrl << "/mods/" << modId << "/files?pageSize=50";
+    url << kBaseUrl << "/mods/" << modId << "/files?pageSize=" << pageSize << "&index=" << index;
     if (gameVersionTypeId.has_value()) url << "&gameVersionTypeId=" << *gameVersionTypeId;
 
     auto resp = HttpClient::get(url.str(), authHeaders());
     if (!resp.ok()) throwFor(resp, "getFiles(" + std::to_string(modId) + ")");
+    return parseFilesPage(resp.body);
+}
 
-    json j = json::parse(resp.body);
-    std::vector<CurseForgeFile> out;
-    for (const auto& f : j.at("data")) out.push_back(parseFile(f));
-    return out;
+FilesPage CurseForgeClient::parseFilesPage(const std::string& jsonBody) {
+    json j = json::parse(jsonBody);
+    FilesPage page;
+    for (const auto& f : j.at("data")) page.files.push_back(parseFile(f));
+    page.totalCount = static_cast<int>(page.files.size());
+    if (j.contains("pagination") && j.at("pagination").is_object()) {
+        const auto& pg = j.at("pagination");
+        page.index = intOrDefault(pg, "index", 0);
+        page.totalCount = intOrDefault(pg, "totalCount", page.totalCount);
+    }
+    return page;
 }
 
 CurseForgeFile CurseForgeClient::getFile(int64_t modId, int64_t fileId) {

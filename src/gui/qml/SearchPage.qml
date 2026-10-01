@@ -47,29 +47,12 @@ Kirigami.ScrollablePage {
                     opacity: 0.8
                     Layout.fillWidth: true
                 }
-                RowLayout {
-                    QQC2.ComboBox {
-                        id: flavorBox
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 14
-                        textRole: "name"
-                        valueRole: "id"
-                        // reading wam.flavors makes this re-evaluate once the flavor list loads
-                        model: { const dep = wam.flavors; return wam.flavorsForMod(row.modId) }
-                        currentIndex: count === 1 ? 0 : -1 // must pick, unless there is only one choice
-                        displayText: currentIndex < 0 ? qsTr("Pick a flavor") : currentText
-                    }
-                    QQC2.ComboBox { id: channelBox; model: ["release", "beta", "alpha"] }
-                    Item { Layout.fillWidth: true }
-                    QQC2.Button {
-                        text: qsTr("Install")
-                        icon.name: "download"
-                        enabled: wam.hasWowPath && flavorBox.currentIndex >= 0
-                        onClicked: {
-                            page.win.showPassiveNotification(qsTr("Installing %1…").arg(row.name))
-                            wam.install(row.modId, channelBox.currentText, flavorBox.currentValue)
-                        }
-                    }
-                }
+              }
+              QQC2.Button {
+                  text: qsTr("Install")
+                  icon.name: "download"
+                  Layout.alignment: Qt.AlignVCenter
+                  onClicked: page.win.openInstall(row.modId, row.name, row.logoUrl)
               }
             }
         }

@@ -2,6 +2,7 @@
 #include <optional>
 #include <string>
 #include <filesystem>
+#include <cstdint>
 
 namespace wam {
 
@@ -10,6 +11,11 @@ namespace wam {
 struct Config {
     std::optional<std::string> curseforge_api_key;
     std::optional<std::string> wow_path; // manually specified install folder
+    // The flavor the folder at wow_path is for (CurseForge gameVersionTypeId and
+    // its display name). Worked out from the folder name when the path is set,
+    // and correctable by hand. Unset when unknown. Installs default to it.
+    std::optional<int64_t> wow_flavor_id;
+    std::optional<std::string> wow_flavor_name;
 
     // Where config.json lives: $XDG_CONFIG_HOME/wow-addon-manager/config.json
     // or ~/.config/wow-addon-manager/config.json
@@ -23,6 +29,10 @@ struct Config {
     static Config load();
 
     void save() const;
+
+    // The last component of wow_path ("_retail_"), tolerating a trailing
+    // slash. Empty if wow_path is unset.
+    std::string wowFolderName() const;
 
     // Convenience: <wow_path>/Interface/AddOns, throws if wow_path unset.
     std::filesystem::path addonsDir() const;
