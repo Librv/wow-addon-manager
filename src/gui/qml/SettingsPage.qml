@@ -22,6 +22,9 @@ Kirigami.ScrollablePage {
                 onClicked: { wam.setApiKey(keyField.text); keyField.clear() }
             }
         }
+        FieldNote {
+            text: qsTr("Needed to search, install and update. Scanning your folder, adopting and removing addons work without it.")
+        }
 
         RowLayout {
             Kirigami.FormData.label: qsTr("WoW folder:")
@@ -33,44 +36,82 @@ Kirigami.ScrollablePage {
                 onClicked: wam.setWowPath(pathField.text)
             }
         }
+        FieldNote {
+            text: qsTr("The game's flavor folder, for example …/World of Warcraft/_retail_. Addons are installed to Interface/AddOns inside it.")
+        }
 
-        RowLayout {
+        QQC2.ComboBox {
+            id: flavorBox
             Kirigami.FormData.label: qsTr("Flavor:")
-            QQC2.ComboBox {
-                id: flavorBox
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 20
-                // Greyed out until there is a folder to describe (and a flavor list to choose from).
-                enabled: wam.hasWowPath && wam.flavors.length > 0
-                model: wam.flavors
-                textRole: "name"
-                valueRole: "id"
-                displayText: currentIndex >= 0 ? currentText
-                           : !wam.hasWowPath ? qsTr("Set the WoW folder first")
-                           : !wam.hasApiKey ? qsTr("Add an API key to detect it")
-                           : qsTr("Not detected: pick one")
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 20
+            // Greyed out until there is a folder to describe (and a flavor list to choose from).
+            enabled: wam.hasWowPath && wam.flavors.length > 0
+            model: wam.flavors
+            textRole: "name"
+            valueRole: "id"
+            displayText: currentIndex >= 0 ? currentText
+                       : !wam.hasWowPath ? qsTr("Set the WoW folder first")
+                       : qsTr("Not detected: pick one")
 
-                function indexOfFlavor() {
-                    const f = wam.flavors
-                    for (let i = 0; i < f.length; ++i)
-                        if (f[i].id === wam.wowFlavorId) return i
-                    return -1
+            function indexOfFlavor() {
+                const f = wam.flavors
+                for (let i = 0; i < f.length; ++i)
+                    if (f[i].id === wam.wowFlavorId) return i
+                return -1
+            }
+            // The user's own pick breaks a plain currentIndex binding, so follow the config explicitly.
+            currentIndex: indexOfFlavor()
+            onCountChanged: currentIndex = indexOfFlavor()
+            onActivated: wam.setWowFlavor(currentValue)
+            Connections {
+                target: wam
+                function onConfigChanged() { flavorBox.currentIndex = flavorBox.indexOfFlavor() }
+            }
+        }
+        FieldNote {
+            text: qsTr("Worked out from the folder name when you save the path, using the flavors below. If it cannot be worked out, pick it here. It is the default when installing; you can still choose another flavor for a single addon in the install window.")
+        }
+
+        Kirigami.Separator {
+            Kirigami.FormData.isSection: true
+            Kirigami.FormData.label: qsTr("Flavors")
+        }
+        FieldNote {
+            text: qsTr("The flavors CurseForge defines, refreshed each time the app starts. The key on the left is CurseForge's; change the name to show something else. Your names are kept when the list refreshes, and the reset button restores CurseForge's name.")
+        }
+
+        Repeater {
+            model: wam.flavorEntries
+            delegate: RowLayout {
+                id: row
+                required property string slug
+                required property string name
+                required property string apiName
+                required property bool edited
+                Kirigami.FormData.label: row.slug + ":"
+
+                QQC2.TextField {
+                    id: nameField
+                    text: row.name
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                    onEditingFinished: {
+                        wam.renameFlavor(row.slug, text)
+                        // An emptied field means "reset": follow the model again.
+                        if (text.trim().length === 0) text = Qt.binding(function() { return row.name })
+                    }
                 }
-                // The user's own pick breaks a plain currentIndex binding, so follow the config explicitly.
-                currentIndex: indexOfFlavor()
-                onCountChanged: currentIndex = indexOfFlavor()
-                onActivated: wam.setWowFlavor(currentValue)
-                Connections {
-                    target: wam
-                    function onConfigChanged() { flavorBox.currentIndex = flavorBox.indexOfFlavor() }
+                QQC2.ToolButton {
+                    icon.name: "edit-undo"
+                    visible: row.edited
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: qsTr("Reset to CurseForge's name (%1)").arg(row.apiName)
+                    onClicked: { wam.renameFlavor(row.slug, ""); nameField.text = Qt.binding(function() { return row.name }) }
                 }
             }
         }
-
-        QQC2.Label {
-            Layout.maximumWidth: Kirigami.Units.gridUnit * 28
-            wrapMode: Text.WordWrap
-            opacity: 0.7
-            text: qsTr("Point this at the game flavor folder, for example …/World of Warcraft/_retail_. Addons are installed to Interface/AddOns inside it. The flavor is worked out from the folder name when you save the path (it needs your API key); pick it here if it could not be worked out. It is the default when installing, and you can still choose another flavor for a single addon in the install window.")
+        FieldNote {
+            visible: wam.flavorEntries.count === 0
+            text: qsTr("No flavors yet. They are fetched from CurseForge when the app starts with an API key.")
         }
     }
 
