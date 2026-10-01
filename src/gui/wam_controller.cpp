@@ -18,10 +18,12 @@ WamController::WamController(QObject* parent) : QObject(parent) {
     connect(&thread_, &QThread::finished, worker_, &QObject::deleteLater);
 
     connect(worker_, &WamWorker::configChanged, this,
-            [this](bool hasKey, bool hasPath, const QString& path) {
+            [this](bool hasKey, bool hasPath, const QString& path, qint64 flavorId, const QString& flavorName) {
                 hasApiKey_ = hasKey;
                 hasWowPath_ = hasPath;
                 wowPath_ = path;
+                wowFlavorId_ = flavorId;
+                wowFlavorName_ = flavorName;
                 emit configChanged();
                 // The client caches this, so repeat requests cost no network.
                 if (hasKey) {
@@ -41,6 +43,19 @@ WamController::WamController(QObject* parent) : QObject(parent) {
 
     connect(worker_, &WamWorker::searchFinished, this,
             [this](const QString&, const QList<wam::CurseForgeMod>& r) { searchResults_.setResults(r); });
+
+    connect(worker_, &WamWorker::installFilesLoaded, this,
+            [this](qint64 modId, qint64 flavorId, int index, const QList<wam::CurseForgeFile>& files, int total) {
+                if (!installFiles_.matches(modId, flavorId)) return; // the dialog moved on to another addon/flavor
+                QList<InstallFile> rows;
+                for (const auto& f : files) rows.push_back(InstallFile::fromCurseForge(f));
+                installFiles_.append(rows, index, total);
+                fetchInstallPageIfNeeded();
+            });
+    connect(worker_, &WamWorker::installFilesFailed, this,
+            [this](qint64 modId, qint64 flavorId, const QString& message) {
+                if (installFiles_.matches(modId, flavorId)) installFiles_.fail(message);
+            });
 
     connect(worker_, &WamWorker::installFinished, this, [this](const wam::InstalledAddon& a) {
         pendingUpdates_.remove(a.modId); // a manual install also resolves a queued update
@@ -104,11 +119,13 @@ QVariantList WamController::flavors() const {
     return out;
 }
 
-QVariantList WamController::flavorsForMod(qint64 modId) const {
+QVariantList WamController::flavorsForInstall(qint64 modId) const {
     const auto ids = searchResults_.flavorIdsFor(modId);
     QVariantList out;
-    for (const auto& t : flavorTypes_)
-        if (ids.contains(static_cast<qint64>(t.id))) out.push_back(flavorMap(t));
+    for (const auto& t : flavorTypes_) {
+        const qint64 id = static_cast<qint64>(t.id);
+        if (ids.contains(id) || id == wowFlavorId_) out.push_back(flavorMap(t));
+    }
     return out.isEmpty() ? flavors() : out;
 }
 
@@ -121,10 +138,52 @@ void WamController::setWowPath(const QString& path) {
 void WamController::search(const QString& query) {
     QMetaObject::invokeMethod(worker_, "search", Qt::QueuedConnection, Q_ARG(QString, query));
 }
-void WamController::install(qint64 modId, const QString& channel, qint64 flavorTypeId) {
+void WamController::setWowFlavor(qint64 flavorTypeId) {
+    QMetaObject::invokeMethod(worker_, "setWowFlavor", Qt::QueuedConnection, Q_ARG(qint64, flavorTypeId));
+}
+
+void WamController::loadInstallFiles(qint64 modId, qint64 flavorTypeId) {
+    installFiles_.begin(modId, flavorTypeId);
+    autoInstallFetches_ = 0;
+    fetchInstallPage();
+}
+
+void WamController::clearInstallFiles() {
+    installFiles_.clear();
+}
+
+void WamController::setInstallChannel(const QString& channel) {
+    installFiles_.setChannel(channel);
+    autoInstallFetches_ = 0;
+    fetchInstallPageIfNeeded(); // e.g. no beta among the versions loaded so far
+}
+
+void WamController::showMoreInstallFiles() {
+    installFiles_.showMore();
+    autoInstallFetches_ = 0;
+    fetchInstallPageIfNeeded();
+}
+
+// Asks the worker for the page after the last one received.
+void WamController::fetchInstallPage() {
+    installFiles_.setLoading(true);
+    QMetaObject::invokeMethod(worker_, "loadInstallFiles", Qt::QueuedConnection,
+                              Q_ARG(qint64, installFiles_.modIdValue()), Q_ARG(qint64, installFiles_.flavorIdValue()),
+                              Q_ARG(int, installFiles_.nextIndex()));
+}
+
+// Pages in more files only while the visible window is short and the server
+// has more, and never more than a few pages per user action.
+void WamController::fetchInstallPageIfNeeded() {
+    if (!installFiles_.wantsFetch() || autoInstallFetches_ >= 3) return;
+    ++autoInstallFetches_;
+    fetchInstallPage();
+}
+
+void WamController::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
     installFlavors_[modId] = flavorTypeId;
-    QMetaObject::invokeMethod(worker_, "install", Qt::QueuedConnection,
-                              Q_ARG(qint64, modId), Q_ARG(QString, channel), Q_ARG(qint64, flavorTypeId));
+    QMetaObject::invokeMethod(worker_, "installFile", Qt::QueuedConnection,
+                              Q_ARG(qint64, modId), Q_ARG(qint64, fileId), Q_ARG(qint64, flavorTypeId));
 }
 void WamController::installManual(qint64 modId, qint64 fileId, const QString& zipPath) {
     QMetaObject::invokeMethod(worker_, "installManual", Qt::QueuedConnection,

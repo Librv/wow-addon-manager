@@ -108,13 +108,27 @@ your search text or results.
   - **Review updates (N)** appears while updates are queued, to reopen the
     popup if you closed it early.
   - **Scan for existing addons** opens the scan window (below).
-- **Search**: search CurseForge, then choose a **flavor** and channel and
-  install. The flavor picker only offers flavors the addon actually has files
-  for, and you must pick one (it is pre-selected only when there is a single
-  choice). The chosen flavor is saved on the addon and shown in the list.
-- **Settings**: CurseForge API key and WoW folder.
+- **Search**: search CurseForge; each result has an **Install** button that
+  opens the install window (below).
+- **Settings**: CurseForge API key, WoW folder, and under it the **flavor** of
+  that folder. The flavor is worked out from the folder name when the path is
+  saved (`_retail_` is Retail, `_classic_era_` is Classic Era, `_ptr_` and
+  `_beta_` count as Retail, and so on, matched against CurseForge's live
+  flavor list), so it needs an API key. If it cannot be worked out, for
+  example for `_classic_`, which several flavors share, pick it by hand. The
+  flavor box is greyed out until a path is set, and clearing or changing the
+  path clears the flavor too.
 
-Two popups:
+Three popups:
+
+- **Install window.** Opens from Search. The flavor starts as the one from
+  Settings; changing it here affects only this install, and refetches the
+  version list. Choose the release type (release, beta, alpha) and a version:
+  the newest five in that channel are listed, and "Show more versions" at the
+  bottom lists more, asking CurseForge for the next page only once everything
+  already loaded is showing. Install is enabled as soon as a version is
+  selected (the newest is pre-selected). If the author has blocked third-party
+  downloads, the usual "point wam at the zip" flow follows.
 
 - **Update review.** Diffs are reviewed **one addon at a time**: **Apply**
   installs that update and moves to the next diff, **Apply all** (to the right
@@ -213,10 +227,14 @@ the id and the display name on each installed addon (`flavorTypeId` and
 `flavorName` in `installed.json`). Updates reuse the stored id, so an addon
 keeps updating within the flavor you chose when you installed it.
 
-Note that one `wow_path` points at one flavor folder (for example `_retail_`).
+Note that one `wow_path` points at one flavor folder (for example `_retail_`),
+and the GUI records that folder's flavor in `config.json` (`wow_flavor_id`,
+`wow_flavor_name`) as the default for installs. The install window lets you
+pick another flavor for a single addon; that is stored on the addon only.
 Until multi-flavor support lands, nothing stops you from installing a Classic
-file into a Retail folder; the flavor picker chooses which CurseForge file
-variant to download, it does not check it against the folder.
+file into a Retail folder: the flavor chooses which CurseForge file variant to
+download, it does not check it against the folder. The CLI does not use the
+folder's flavor; it still takes `--flavor` per command.
 
 ## Safe installs and updates
 
@@ -282,8 +300,9 @@ Does:
 - Keeps working with no API key and no network for local operations
 
 Does not yet do:
-- Per-addon version/channel picker in the GUI (installing or updating to a
-  specific file rather than the newest one in a channel)
+- Choosing a specific version when updating: the install window can install
+  any listed version, but updates always go to the newest file in the addon's
+  release channel
 - Install progress: the GUI shows an "Installing..." notice, not a progress bar
 - Addon profiles, multi-flavor support (several WoW folders at once),
   GitHub/Wago sources, WoW auto-detection
@@ -295,6 +314,11 @@ Known limitations:
   `installed.json`, the folders are the new version while the state still
   says the old one. The next update corrects it, but an addon whose new
   version added a module would not have that module tracked until then.
+- The install window sorts the versions it has loaded newest first by file
+  id, but the CurseForge docs I found do not say which order the API returns
+  pages in. If it returned oldest first, an addon with more than 50 files for
+  one flavor would show its oldest versions first. Check with a mod that has
+  many files (`GET /v1/mods/{id}/files?pageSize=5` and look at the dates).
 - Addon icons are fetched from CurseForge's CDN on demand by Qt Quick's own
   image loader; they need network access and are not cached to disk by wam.
 
@@ -353,17 +377,20 @@ libzip 1.7, Qt 6.4.2) whose network egress does not include
 `api.curseforge.com`. What that means for what has and hasn't been verified:
 
 - **Verified here:** the core library and CLI build; `wam_tests` passes
-  (81 checks), including zip extraction, the zip-slip and absolute-path
+  (99 checks), including zip extraction, the zip-slip and absolute-path
   guards, the install swap, rollback after a partial swap, crash recovery,
   the traversal guards, state round-trips (including a pre-flavor state file),
-  flavor matching, `.toc` reading, reconciliation and adoption, and parsing of
-  CurseForge mod responses (icons and per-mod flavors) against sample JSON.
+  flavor matching, resolving install-folder names to flavors, the config
+  round-trip, `.toc` reading, reconciliation and adoption, and parsing of
+  CurseForge mod and file-page responses (icons, per-mod flavors, dates,
+  pagination) against sample JSON.
   Several of these tests were checked to fail when the code they cover is
   removed.
 - **Compiled and tested here, on Qt 6.4.2:** the GUI adapter layer (worker,
-  controller, models) builds and `wam_gui_tests` passes (52 checks), including
+  controller, models) builds and `wam_gui_tests` passes (79 checks), including
   a run through the real worker thread that scans a temporary AddOns folder
-  and adopts from it, offline. The `wam-gui` executable was linked using a
+  and adopts from it, offline, and the install window's version list (channel
+  filter, five at a time, paging, de-duplication). The `wam-gui` executable was linked using a
   scratch-only workaround for Qt 6.4 (which lacks `loadFromModule`); the
   shipped code requires Qt 6.5.
 - **Confirmed by real use, not by me:** an earlier version of the QML views
@@ -372,14 +399,16 @@ libzip 1.7, Qt 6.4.2) whose network egress does not include
   queue's `head` always has every key, with a test that fails without the fix)
   and the graphics-scene warning above.
 - **Not verified here:** the QML in this version (the PagePool navigation, the
-  sidebar settings, the update and scan popups, the icon component and the
-  reworked lists) has only been linted for syntax, not rendered. The
+  sidebar settings, the install, update and scan popups, the flavor row in
+  Settings, the icon component and the reworked lists) has only been linted for syntax, not rendered. The
   `PagePool`, `PagePoolAction` and drawer properties it uses were checked
   against Kirigami's upstream `master` sources, which may differ from the
   version you have installed. Nothing has been exercised against
   the live CurseForge API (`search`, `files`, `install`, `update`, adopt's
-  `moduleNames` cross-check, batched mod lookups for icons, and the flavor
-  picker). In particular, icons rely on the mod's `logo.thumbnailUrl` and the
-  flavor picker on `latestFilesIndexes[].gameVersionTypeId`; if a mod reports
-  neither, you get the placeholder icon and every flavor is offered. Those
+  `moduleNames` cross-check, batched mod lookups for icons, paged file lists,
+  and flavor detection). In particular, icons rely on the mod's
+  `logo.thumbnailUrl`, the install window's flavor list on
+  `latestFilesIndexes[].gameVersionTypeId`, and version dates on the file's
+  `fileDate`; if a mod reports none of these you get the placeholder icon,
+  every flavor, or no date. Those
   need checking on your machine with your real key.

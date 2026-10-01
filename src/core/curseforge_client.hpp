@@ -32,9 +32,19 @@ struct CurseForgeFile {
     std::vector<std::string> gameVersions; // actual client version strings, e.g. "11.0.5", NOT flavor names
     std::optional<std::string> downloadUrl; // nullopt => author blocked third-party downloads
     int64_t fileFingerprint = 0;
+    std::string fileDate; // ISO-8601 upload time as CurseForge reports it, e.g. "2026-09-29T14:03:11.5Z"
     std::vector<std::string> moduleNames; // top-level folders this file writes into AddOns/
 
     bool isBlocked() const { return !downloadUrl.has_value(); }
+};
+
+// One page of a mod's file list. The API pages with index/pageSize and
+// reports the total, so a caller can ask for the next page on demand.
+struct FilesPage {
+    std::vector<CurseForgeFile> files;
+    int index = 0;      // offset of the first file in this page
+    int totalCount = 0; // files matching the filter across every page
+    bool hasMore() const { return index + static_cast<int>(files.size()) < totalCount; }
 };
 
 // A WoW "flavor" (Retail, Classic Era, Burning Crusade Classic, ...) as
@@ -66,6 +76,12 @@ public:
     std::vector<CurseForgeFile> getFiles(int64_t modId, std::optional<int64_t> gameVersionTypeId = std::nullopt);
     CurseForgeFile getFile(int64_t modId, int64_t fileId);
 
+    // One page of the file list (the API allows at most 50 per page). The
+    // order within and across pages is whatever the API returns; callers that
+    // need newest-first sort what they have loaded.
+    FilesPage getFilesPage(int64_t modId, std::optional<int64_t> gameVersionTypeId,
+                           int index = 0, int pageSize = 50);
+
     // Resolves a flavor name/slug (case-insensitive: "retail", "Retail",
     // "classic era", ...) to CurseForge's numeric gameVersionTypeId for WoW,
     // by discovering the live list from GET /v1/games/1/version-types and
@@ -76,6 +92,15 @@ public:
     // The matching rule above, on an already-fetched list (pure, testable).
     static std::optional<int64_t> matchFlavor(const std::vector<GameVersionType>& types,
                                                const std::string& flavorSubstring);
+
+    // Works out which flavor a WoW install folder belongs to from its name:
+    // "_retail_" -> Retail, "_classic_era_" -> Classic Era. Test and preview
+    // realms ("_ptr_", "_xptr_", "_beta_", "_classic_ptr_") share the live
+    // flavor's addons, so those words are ignored (a bare one means Retail). Only an exact name or slug
+    // match counts; an ambiguous folder such as "_classic_" resolves only if a
+    // flavor is literally called "Classic", otherwise nullopt (never a guess).
+    static std::optional<int64_t> matchFlavorForFolder(const std::vector<GameVersionType>& types,
+                                                        const std::string& folderName);
 
     // Lists every flavor CurseForge currently knows about for WoW, useful
     // for telling the user what's valid when their --flavor doesn't match.
@@ -92,6 +117,8 @@ public:
     // parseModList: {"data":[mod,...]}   parseModObject: {"data":mod}
     static std::vector<CurseForgeMod> parseModList(const std::string& jsonBody);
     static CurseForgeMod parseModObject(const std::string& jsonBody);
+    // parseFilesPage: {"data":[file,...],"pagination":{"index":0,"totalCount":N,...}}
+    static FilesPage parseFilesPage(const std::string& jsonBody);
 
     static const int64_t kWowGameId = 1;
 

@@ -9,6 +9,7 @@
 #include "gui/search_results_model.hpp"
 #include "gui/pending_updates_model.hpp"
 #include "gui/scan_results_model.hpp"
+#include "gui/install_files_model.hpp"
 #include <QStringList>
 
 namespace wam::gui {
@@ -24,9 +25,12 @@ class WamController : public QObject {
     Q_PROPERTY(bool hasApiKey READ hasApiKey NOTIFY configChanged)
     Q_PROPERTY(bool hasWowPath READ hasWowPath NOTIFY configChanged)
     Q_PROPERTY(QString wowPath READ wowPath NOTIFY configChanged)
+    Q_PROPERTY(qint64 wowFlavorId READ wowFlavorId NOTIFY configChanged)     // 0 = not known
+    Q_PROPERTY(QString wowFlavorName READ wowFlavorName NOTIFY configChanged)
     Q_PROPERTY(wam::gui::SearchResultsModel* searchResults READ searchResults CONSTANT)
     Q_PROPERTY(wam::gui::InstalledAddonsModel* installedAddons READ installedAddons CONSTANT)
     Q_PROPERTY(wam::gui::PendingUpdatesModel* pendingUpdates READ pendingUpdates CONSTANT)
+    Q_PROPERTY(wam::gui::InstallFilesModel* installFiles READ installFiles CONSTANT)
     Q_PROPERTY(wam::gui::ScanResultsModel* scanResults READ scanResults CONSTANT)
     Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
     Q_PROPERTY(QVariantList flavors READ flavors NOTIFY flavorsChanged)   // [{id, name}, ...]
@@ -39,6 +43,9 @@ public:
     bool hasApiKey() const { return hasApiKey_; }
     bool hasWowPath() const { return hasWowPath_; }
     QString wowPath() const { return wowPath_; }
+    qint64 wowFlavorId() const { return wowFlavorId_; }
+    QString wowFlavorName() const { return wowFlavorName_; }
+    InstallFilesModel* installFiles() { return &installFiles_; }
     bool checkingUpdates() const { return checking_; }
     SearchResultsModel* searchResults() { return &searchResults_; }
     InstalledAddonsModel* installedAddons() { return &installedAddons_; }
@@ -47,16 +54,24 @@ public:
     bool scanning() const { return scanning_; }
     QVariantList flavors() const;
 
-    // Flavors this mod has files for (all flavors if it reports none).
-    // Uses cached data only, never blocks.
-    Q_INVOKABLE QVariantList flavorsForMod(qint64 modId) const;
+    // Flavors offered in the install dialog for a search result: the ones the
+    // mod has files for, plus the WoW folder's own flavor so it can always be
+    // the default. All flavors if the mod reports none. Cached data only.
+    Q_INVOKABLE QVariantList flavorsForInstall(qint64 modId) const;
     Q_INVOKABLE QString localPath(const QUrl& url) const { return url.toLocalFile(); }
 
 public slots:
     void setApiKey(const QString& key);
     void setWowPath(const QString& path);
     void search(const QString& query);
-    void install(qint64 modId, const QString& channel, qint64 flavorTypeId);
+    void setWowFlavor(qint64 flavorTypeId); // 0 clears it
+
+    // Install dialog: the version list for one addon and flavor.
+    void loadInstallFiles(qint64 modId, qint64 flavorTypeId);
+    void clearInstallFiles();
+    void setInstallChannel(const QString& channel);
+    void showMoreInstallFiles();
+    void installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId);
     void installManual(qint64 modId, qint64 fileId, const QString& zipPath);
     void setFlavor(qint64 modId, qint64 flavorTypeId);
 
@@ -87,6 +102,8 @@ signals:
 
 private:
     void dispatchApply(qint64 modId, qint64 fileId);
+    void fetchInstallPage();
+    void fetchInstallPageIfNeeded();
 
     QThread thread_;
     WamWorker* worker_; // lives on thread_; never call its methods directly
@@ -95,6 +112,8 @@ private:
     InstalledAddonsModel installedAddons_;
     PendingUpdatesModel pendingUpdates_;
     ScanResultsModel scanResults_;
+    InstallFilesModel installFiles_;
+    int autoInstallFetches_ = 0; // pages fetched in a row without the user asking, capped
     QList<wam::GameVersionType> flavorTypes_;
     QHash<qint64, qint64> installFlavors_; // flavor picked per install, reused by the blocked/manual flow
 
@@ -103,6 +122,8 @@ private:
     bool checking_ = false;
     bool scanning_ = false;
     QString wowPath_;
+    qint64 wowFlavorId_ = 0;
+    QString wowFlavorName_;
 };
 
 } // namespace wam::gui

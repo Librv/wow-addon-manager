@@ -34,14 +34,24 @@ public slots:
     void initialize();
 
     void setApiKey(const QString& key);
+    // Saves the path and works out which flavor the folder is for (see
+    // CurseForgeClient::matchFlavorForFolder). The previous flavor belonged to
+    // the previous folder, so it is cleared first.
     void setWowPath(const QString& path);
+    // Corrects the flavor of the WoW folder by hand (0 clears it).
+    void setWowFlavor(qint64 flavorTypeId);
 
     void search(const QString& query);
     void listGameVersionTypes();
     void getFiles(qint64 modId, qint64 flavorTypeId);
 
-    // channel: "release" | "beta" | "alpha".
-    void install(qint64 modId, const QString& channel, qint64 flavorTypeId);
+    // One page of a mod's files for a flavor, for the install dialog. Emits
+    // installFilesLoaded or installFilesFailed.
+    void loadInstallFiles(qint64 modId, qint64 flavorTypeId, int index);
+
+    // Installs one specific file (the version picked in the install dialog).
+    // flavorTypeId is recorded on the addon and only affects this addon.
+    void installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId);
 
     // Installs from a zip the user downloaded themselves (author-blocked
     // downloads). Replaces the tracked version if there is one. A
@@ -84,12 +94,16 @@ public slots:
     void untrackAddon(qint64 modId);
 
 signals:
-    void configChanged(bool hasApiKey, bool hasWowPath, const QString& wowPath);
+    void configChanged(bool hasApiKey, bool hasWowPath, const QString& wowPath,
+                       qint64 wowFlavorId, const QString& wowFlavorName);
     void errorOccurred(const QString& context, const QString& message);
 
     void searchFinished(const QString& query, const QList<wam::CurseForgeMod>& results);
     void gameVersionTypesLoaded(const QList<wam::GameVersionType>& types);
     void filesLoaded(qint64 modId, const QList<wam::CurseForgeFile>& files);
+    void installFilesLoaded(qint64 modId, qint64 flavorTypeId, int index,
+                            const QList<wam::CurseForgeFile>& files, int totalCount);
+    void installFilesFailed(qint64 modId, qint64 flavorTypeId, const QString& message);
 
     void installFinished(const wam::InstalledAddon& addon);
     // Author blocked third-party downloads: the UI should offer the manual
@@ -119,6 +133,11 @@ private:
     // nullptr if no key is set. A pointer, not a copy: the client caches
     // flavor and class ids, and a copy would throw that cache away.
     wam::CurseForgeClient* requireClient(const char* context);
+
+    void emitConfig();
+    // If a key and a WoW folder are set but no flavor is known yet, tries to
+    // work it out from the folder name. Best effort: needs the flavor list.
+    void detectFlavor();
 
     wam::Config config_;
     std::optional<wam::CurseForgeClient> client_;
