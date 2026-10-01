@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QThread>
 #include <QHash>
+#include <QSet>
 #include <QUrl>
 #include <QVariantList>
 #include "gui/wam_worker.hpp"
@@ -10,6 +11,7 @@
 #include "gui/pending_updates_model.hpp"
 #include "gui/scan_results_model.hpp"
 #include "gui/install_files_model.hpp"
+#include "gui/flavors_model.hpp"
 #include <QStringList>
 
 namespace wam::gui {
@@ -30,6 +32,7 @@ class WamController : public QObject {
     Q_PROPERTY(wam::gui::SearchResultsModel* searchResults READ searchResults CONSTANT)
     Q_PROPERTY(wam::gui::InstalledAddonsModel* installedAddons READ installedAddons CONSTANT)
     Q_PROPERTY(wam::gui::PendingUpdatesModel* pendingUpdates READ pendingUpdates CONSTANT)
+    Q_PROPERTY(wam::gui::FlavorsModel* flavorEntries READ flavorEntries CONSTANT)  // the editable flavor list
     Q_PROPERTY(wam::gui::InstallFilesModel* installFiles READ installFiles CONSTANT)
     Q_PROPERTY(wam::gui::ScanResultsModel* scanResults READ scanResults CONSTANT)
     Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
@@ -46,6 +49,7 @@ public:
     qint64 wowFlavorId() const { return wowFlavorId_; }
     QString wowFlavorName() const { return wowFlavorName_; }
     InstallFilesModel* installFiles() { return &installFiles_; }
+    FlavorsModel* flavorEntries() { return &flavorEntries_; }
     bool checkingUpdates() const { return checking_; }
     SearchResultsModel* searchResults() { return &searchResults_; }
     InstalledAddonsModel* installedAddons() { return &installedAddons_; }
@@ -59,12 +63,17 @@ public:
     // the default. All flavors if the mod reports none. Cached data only.
     Q_INVOKABLE QVariantList flavorsForInstall(qint64 modId) const;
     Q_INVOKABLE QString localPath(const QUrl& url) const { return url.toLocalFile(); }
+    // Where a browser gets a file from (for downloads the author has blocked
+    // for other tools), and an addon's page on the website.
+    Q_INVOKABLE QString downloadUrl(qint64 modId, qint64 fileId) const;
+    Q_INVOKABLE QString modPageUrl(const QString& slug) const;
 
 public slots:
     void setApiKey(const QString& key);
     void setWowPath(const QString& path);
     void search(const QString& query);
     void setWowFlavor(qint64 flavorTypeId); // 0 clears it
+    void renameFlavor(const QString& slug, const QString& name); // empty name = reset to CurseForge's
 
     // Install dialog: the version list for one addon and flavor.
     void loadInstallFiles(qint64 modId, qint64 flavorTypeId);
@@ -76,7 +85,9 @@ public slots:
     void setFlavor(qint64 modId, qint64 flavorTypeId);
 
     void checkAllUpdates();
-    void applyUpdate(qint64 modId);   // applies one; its row leaves the queue when done
+    void checkUpdate(qint64 modId);   // one addon; see addonUpToDate / updateFound
+    void loadChangelog(qint64 modId); // fills the addon's changelog in the installed list
+    void linkFile(qint64 modId, qint64 fileId, qint64 flavorTypeId);    void applyUpdate(qint64 modId);   // applies one; its row leaves the queue when done
     void applyAllUpdates();           // every pending, non-blocked row
     void skipUpdate(qint64 modId);    // drops the row without applying
 
@@ -93,7 +104,9 @@ signals:
     void scanningChanged();
     void adopted(qint64 modId, const QString& name, int folderCount);
     void checkingUpdatesChanged();
-    void updateCheckFinished(int available);
+    void addonUpToDate(qint64 modId, const QString& name);  // result of checkUpdate(modId)
+    void updateFound(qint64 modId);                         // ... or an update was queued for it
+    void linked(qint64 modId, const QString& name);    void updateCheckFinished(int available);
     void errorOccurred(const QString& context, const QString& message);
     void installFinished(qint64 modId, const QString& displayName);
     void updateApplied(qint64 modId, const QString& displayName);
@@ -113,8 +126,9 @@ private:
     PendingUpdatesModel pendingUpdates_;
     ScanResultsModel scanResults_;
     InstallFilesModel installFiles_;
+    QSet<qint64> singleChecks_; // addons whose own update check is in flight
     int autoInstallFetches_ = 0; // pages fetched in a row without the user asking, capped
-    QList<wam::GameVersionType> flavorTypes_;
+    FlavorsModel flavorEntries_;
     QHash<qint64, qint64> installFlavors_; // flavor picked per install, reused by the blocked/manual flow
 
     bool hasApiKey_ = false;

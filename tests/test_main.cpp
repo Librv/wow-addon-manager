@@ -10,6 +10,8 @@
 #include "core/config.hpp"
 #include "core/toc_reader.hpp"
 #include "core/reconciler.hpp"
+#include "core/flavor_cache.hpp"
+#include "core/html_text.hpp"
 
 #include <zip.h>
 #include <iostream>
@@ -327,8 +329,9 @@ void testStateStoreLegacyFile(const fs::path& workDir) {
               R"("gameVersions":[],"folders":["Old"],"installedAt":"2026-01-01T00:00:00Z","manuallyProvided":false}]})");
     auto store = StateStore::load();
     auto found = store.find(7);
-    check(found.has_value() && found->flavorTypeId == 0 && found->flavorName.empty() && found->iconUrl.empty(),
-          "a state file with no flavor/icon fields loads as unknown");
+    check(found.has_value() && found->flavorTypeId == 0 && found->flavorName.empty() && found->iconUrl.empty() &&
+          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && !found->adopted,
+          "a state file with no flavor/icon/detail fields loads as unknown");
     setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
 }
 
@@ -457,6 +460,104 @@ void testParseFilesPage() {
     check(last.index == 4 && !last.hasMore(), "the final page reports no more");
 }
 
+void testFlavorCache(const fs::path& workDir) {
+    setenv("XDG_CONFIG_HOME", (workDir / "cfg_cache").string().c_str(), 1);
+    check(FlavorCache::load().all().empty(), "a missing flavors.json loads as an empty cache");
+
+    FlavorCache c;
+    c.merge({{10, "Retail", "wow-retail"}, {40, "Forever", "wow-forever"}});
+    check(c.all().size() == 2 && c.all()[1].slug == "wow-forever" && c.all()[1].name == "Forever" && c.all()[1].apiName == "Forever",
+          "merge adds new flavors keyed by CurseForge's slug, in the API's order");
+    check(c.nameFor(40) == "Forever" && c.nameFor(999, "?") == "?", "nameFor looks a display name up by id, with a fallback");
+
+    check(c.rename("wow-forever", "WoW Forever") && c.nameFor(40) == "WoW Forever", "rename changes the display name");
+    check(!c.rename("nope", "x"), "renaming an unknown key reports failure");
+
+    // CurseForge renames things and reissues ids: the user's edit survives, the rest follows.
+    c.merge({{10, "Retail (Midnight)", "wow-retail"}, {41, "Forever", "wow-forever"}});
+    check(c.findById(10)->name == "Retail (Midnight)" && c.findById(10)->apiName == "Retail (Midnight)",
+          "an unedited name follows CurseForge's rename");
+    check(c.nameFor(41) == "WoW Forever" && !c.findById(40).has_value() && c.findById(41)->apiName == "Forever",
+          "an edited name is kept while the id and CurseForge's name are refreshed");
+
+    check(c.rename("wow-forever", "") && c.nameFor(41) == "Forever", "an empty name resets to CurseForge's");
+
+    c.rename("wow-forever", "Ever");
+    c.merge({{10, "Retail (Midnight)", "wow-retail"}}); // Forever vanished upstream
+    check(c.findById(41).has_value() && c.all().size() == 2, "a flavor CurseForge stops listing is kept");
+
+    c.save();
+    auto back = FlavorCache::load();
+    check(back.all().size() == 2 && back.all()[0].slug == "wow-retail" && back.nameFor(41) == "Ever" && back.findById(41)->apiName == "Forever",
+          "the cache round-trips through flavors.json, order and edits included");
+
+    auto types = back.asTypes();
+    check(types.size() == 2 && types[1].name == "Ever" && types[1].slug == "wow-forever" && types[1].id == 41,
+          "asTypes exposes display names for matching");
+    check(back.asTypes(true)[1].name == "Forever", "asTypes(true) exposes CurseForge's own names instead");
+
+    // Hand-edited short form and a damaged file.
+    writeFile(FlavorCache::path(), R"({"wow-retail": "Live", "wow-forever": {"id": 41, "name": "Ever", "api_name": "Forever"}})");
+    auto hand = FlavorCache::load();
+    check(hand.all().size() == 2 && hand.all()[0].name == "Live" && hand.all()[0].id == 0,
+          "a hand-written \"key\": \"name\" entry loads with the name and no id yet");
+    hand.merge({{10, "Retail", "wow-retail"}});
+    check(hand.findById(10).has_value() && hand.nameFor(10) == "Live" && hand.findById(10)->apiName == "Retail",
+          "merge fills in the id of a hand-written entry and keeps the name you typed");
+
+    writeFile(FlavorCache::path(), "{ not json");
+    check(FlavorCache::load().all().empty(), "a damaged flavors.json loads as empty instead of throwing");
+
+    GameVersionType noSlug{7, "Some New Flavor", ""};
+    check(FlavorCache::keyFor(noSlug) == "some-new-flavor", "a flavor with no slug gets a key made from its name");
+}
+
+void testHtmlToPlainText() {
+    check(htmlToPlainText("<p>Major Features:</p><ul><li>Action bars &amp; more</li><li>Flight timer</li></ul><br>Done")
+              == "Major Features:\n\n- Action bars & more\n- Flight timer\n\nDone",
+          "htmlToPlainText turns paragraphs, list items and breaks into lines and bullets");
+    check(htmlToPlainText("**Major Features:**\n- **Action Bars: End Caps**") == "**Major Features:**\n- **Action Bars: End Caps**",
+          "text that already contains markdown is left as it is");
+    check(htmlToPlainText("a &lt;b&gt; &quot;q&quot; &#39;s&#39; &#x2713; &nbsp;x &unknown; &") == "a <b> \"q\" 's' \xE2\x9C\x93  x &unknown; &",
+          "entities are decoded, unknown ones and a bare ampersand stay literal");
+    check(htmlToPlainText("x<!-- hidden -->y <a href=\"u\">link</a> 1 < 2") == "xy link 1 < 2",
+          "comments and other tags vanish, a stray < survives");
+    check(htmlToPlainText("<p>a</p><p></p><p></p><p>b</p>") == "a\n\nb", "runs of blank lines collapse to one");
+    check(htmlToPlainText("  \n<p> </p>").empty() && htmlToPlainText("").empty(), "empty and whitespace-only input give an empty string");
+}
+
+void testFileDetailsAndLookups(const fs::path& workDir) {
+    auto list = CurseForgeClient::parseFileList(
+        R"({"data":[{"id":5,"modId":1,"displayName":"v5","fileName":"a-5.zip","releaseType":2,"fileDate":"2026-09-29T14:03:11.5Z"},
+                    {"id":6,"modId":2,"fileName":"b-6.zip","fileDate":null}]})");
+    check(list.size() == 2 && list[0].displayName == "v5" && list[0].fileDate == "2026-09-29T14:03:11.5Z" && list[1].modId == 2,
+          "parseFileList reads a batch of files from different mods");
+    check(CurseForgeClient::parseChangelog(R"({"data":"<p>hi</p>"})") == "<p>hi</p>" && CurseForgeClient::parseChangelog(R"({"data":null})").empty(),
+          "parseChangelog returns the HTML, or nothing for a null changelog");
+    check(CurseForgeClient::browserDownloadUrl(26886, 8875044) == "https://www.curseforge.com/api/v1/mods/26886/files/8875044/download",
+          "browserDownloadUrl builds the website's direct download link");
+    check(CurseForgeClient::modPageUrl("questie") == "https://www.curseforge.com/wow/addons/questie", "modPageUrl builds the addon page link");
+
+    InstalledAddon a;
+    a.modId = 1; a.folders = {"Keep"}; a.flavorTypeId = 9; a.installedAt = "then";
+    recordFile(a, list[0]);
+    check(a.fileId == 5 && a.fileName == "a-5.zip" && a.fileDisplayName == "v5" && a.fileDate == "2026-09-29T14:03:11.5Z" &&
+          a.channel == ReleaseChannel::Beta,
+          "recordFile stores the file's id, names, date and channel");
+    check(a.folders == std::vector<std::string>({"Keep"}) && a.flavorTypeId == 9 && a.installedAt == "then",
+          "recordFile leaves folders, flavor and install time alone");
+
+    setenv("XDG_DATA_HOME", (workDir / "details_data").string().c_str(), 1);
+    a.modSlug = "my-addon"; a.adopted = true;
+    auto store = StateStore::load();
+    store.upsert(a);
+    store.save();
+    auto back = StateStore::load().find(1);
+    check(back && back->fileDisplayName == "v5" && back->fileDate == "2026-09-29T14:03:11.5Z" && back->modSlug == "my-addon" && back->adopted,
+          "file details, slug and the adopted flag round-trip through installed.json");
+    // legacy files (no such fields) are covered by testStateStoreLegacyFile
+}
+
 void testNoApiKeyStillUsable(const fs::path& workDir) {
     // Core requirement from the plan: the app must stay usable for managing
     // already-installed addons with no API key and no network. Config with
@@ -564,6 +665,7 @@ void testReconcilerAdopt(const fs::path& workDir) {
           "adopt creates a new entry with fileId 0 (version unknown) and the icon");
     check(state.find(5).has_value() && state.find(5)->folders == std::vector<std::string>({"Foo"}),
           "adopt records the entry in state");
+    check(rec.adopted && rec.fileDisplayName.empty() && rec.modSlug.empty(), "an adopted entry is flagged and has no file details yet");
 
     auto merged = Reconciler::adopt(state, addonsDir, 5, "ignored", "http://other", {"Foo", "FooOptions"});
     check(merged.folders == std::vector<std::string>({"Foo", "FooOptions"}),
@@ -618,6 +720,9 @@ int main() {
     testFlavorForFolder();
     testConfigFlavorRoundtrip(workDir);
     testParseFilesPage();
+    testFlavorCache(workDir);
+    testHtmlToPlainText();
+    testFileDetailsAndLookups(workDir);
     testNoApiKeyStillUsable(workDir);
     testTocReader(workDir);
     testReconciler(workDir);

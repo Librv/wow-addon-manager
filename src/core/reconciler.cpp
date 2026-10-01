@@ -90,6 +90,7 @@ InstalledAddon Reconciler::adopt(StateStore& state, const fs::path& addonsDir, i
         rec.channel = ReleaseChannel::Release;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
+        rec.adopted = true;
     }
     if (rec.iconUrl.empty()) rec.iconUrl = iconUrl;
     for (const auto& f : folders)

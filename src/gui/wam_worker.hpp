@@ -6,6 +6,8 @@
 #include "core/config.hpp"
 #include "core/curseforge_client.hpp"
 #include "core/state_store.hpp"
+#include "core/flavor_cache.hpp"
+#include "gui/flavors_model.hpp"
 #include "gui/scan_results_model.hpp"
 #include <QStringList>
 
@@ -42,7 +44,8 @@ public slots:
     void setWowFlavor(qint64 flavorTypeId);
 
     void search(const QString& query);
-    void listGameVersionTypes();
+    // Renames a flavor in the cache (an empty name resets it to CurseForge's).
+    void renameFlavor(const QString& slug, const QString& name);
     void getFiles(qint64 modId, qint64 flavorTypeId);
 
     // One page of a mod's files for a flavor, for the install dialog. Emits
@@ -85,9 +88,21 @@ public slots:
     // module. rescan re-emits scanFinished afterwards.
     void adopt(qint64 modId, const QStringList& folders, bool includeSiblings, bool rescan);
 
-    // Fills in missing addon icons for tracked addons (one batched request per
-    // 50 mods). Silent and best-effort: a failure just leaves the placeholder.
-    void backfillIcons();
+    // Fills in what tracked addons are missing and CurseForge can tell us:
+    // icons and page slugs (from the mods) and version names and upload dates
+    // (from the files), in batched requests. Silent and best-effort.
+    void backfillDetails();
+
+    // checkUpdate for one addon, then singleCheckFinished.
+    void checkOneUpdate(qint64 modId);
+
+    // Records which CurseForge file an adopted addon matches. Nothing is
+    // downloaded and nothing on disk changes; the flavor is the one the file
+    // was picked under.
+    void linkFile(qint64 modId, qint64 fileId, qint64 flavorTypeId);
+
+    // A file's changelog as plain text, for the details panel.
+    void loadChangelog(qint64 modId, qint64 fileId);
 
     void refreshAddonList();
     void removeAddon(qint64 modId);
@@ -99,7 +114,7 @@ signals:
     void errorOccurred(const QString& context, const QString& message);
 
     void searchFinished(const QString& query, const QList<wam::CurseForgeMod>& results);
-    void gameVersionTypesLoaded(const QList<wam::GameVersionType>& types);
+    void flavorsChanged(const QList<wam::gui::FlavorInfo>& flavors);
     void filesLoaded(qint64 modId, const QList<wam::CurseForgeFile>& files);
     void installFilesLoaded(qint64 modId, qint64 flavorTypeId, int index,
                             const QList<wam::CurseForgeFile>& files, int totalCount);
@@ -120,6 +135,10 @@ signals:
     void updateApplied(const wam::InstalledAddon& addon);
     void updateFailed(qint64 modId, const QString& message);
     void allUpdatesChecked();
+    void singleCheckFinished(qint64 modId);
+    void linked(qint64 modId, const QString& name);
+    void changelogLoaded(qint64 fileId, const QString& text);
+    void changelogFailed(qint64 fileId, const QString& message);
 
     void scanFinished(const QList<wam::gui::ScanGroup>& groups);
     void adopted(qint64 modId, const QString& name, int folderCount);
@@ -135,13 +154,19 @@ private:
     wam::CurseForgeClient* requireClient(const char* context);
 
     void emitConfig();
-    // If a key and a WoW folder are set but no flavor is known yet, tries to
-    // work it out from the folder name. Best effort: needs the flavor list.
+    qint64 effectiveFlavor(const wam::InstalledAddon& a) const;
+    void emitFlavors();
+    // Fetches CurseForge's flavor list and folds it into the cache. Silent on
+    // failure: the cache on disk keeps working.
+    void refreshFlavors();
+    // If a WoW folder is set but no flavor is known yet, tries to work it out
+    // from the folder name and the flavor cache.
     void detectFlavor();
 
     wam::Config config_;
     std::optional<wam::CurseForgeClient> client_;
     wam::StateStore state_;
+    wam::FlavorCache flavors_;
 };
 
 } // namespace wam::gui

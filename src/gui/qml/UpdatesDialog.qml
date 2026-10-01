@@ -82,7 +82,7 @@ Kirigami.Dialog {
             actions: [
                 Kirigami.Action {
                     text: qsTr("Open on CurseForge")
-                    onTriggered: Qt.openUrlExternally("https://www.curseforge.com/wow/addons/" + dialog.u.modSlug)
+                    onTriggered: Qt.openUrlExternally(wam.downloadUrl(dialog.u.modId, dialog.u.latestFileId))
                 },
                 Kirigami.Action {
                     text: qsTr("Choose zip…")

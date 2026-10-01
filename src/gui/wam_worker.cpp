@@ -3,6 +3,7 @@
 #include "core/http_client.hpp"
 #include "core/scoped_temp_file.hpp"
 #include "core/reconciler.hpp"
+#include "core/html_text.hpp"
 #include "gui/toc_text.hpp"
 #include <QList>
 #include <algorithm>
@@ -32,15 +33,6 @@ std::optional<int64_t> optId(qint64 id) {
     return id != 0 ? std::optional<int64_t>(id) : std::nullopt;
 }
 
-std::string flavorNameFor(CurseForgeClient& c, qint64 id) {
-    if (id == 0) return {};
-    try {
-        for (const auto& t : c.listGameVersionTypes())
-            if (t.id == id) return t.name;
-    } catch (const std::exception&) {}
-    return {};
-}
-
 } // namespace
 
 WamWorker::WamWorker(QObject* parent) : QObject(parent) {}
@@ -61,17 +53,36 @@ void WamWorker::emitConfig() {
                        QString::fromStdString(config_.wow_flavor_name.value_or("")));
 }
 
-void WamWorker::detectFlavor() {
-    if (!client_ || !config_.wow_path.has_value() || config_.wow_flavor_id.has_value()) return;
+void WamWorker::emitFlavors() {
+    QList<FlavorInfo> out;
+    for (const auto& e : flavors_.all())
+        out.push_back({static_cast<qint64>(e.id), QString::fromStdString(e.slug),
+                       QString::fromStdString(e.name), QString::fromStdString(e.apiName)});
+    emit flavorsChanged(out);
+}
+
+void WamWorker::refreshFlavors() {
+    if (!client_) return;
     try {
-        const auto types = client_->listGameVersionTypes();
-        const auto id = CurseForgeClient::matchFlavorForFolder(types, config_.wowFolderName());
-        if (!id.has_value()) return; // unknown folder name: the user picks one in Settings
-        config_.wow_flavor_id = *id;
-        for (const auto& t : types) if (t.id == *id) config_.wow_flavor_name = t.name;
-        config_.save();
-        emitConfig();
-    } catch (const std::exception&) {} // no network: try again next start or when the path changes
+        flavors_.merge(client_->listGameVersionTypes());
+        flavors_.save();
+        emitFlavors();
+    } catch (const std::exception&) {} // offline: whatever is on disk stays in use
+}
+
+void WamWorker::detectFlavor() {
+    if (!config_.wow_path.has_value() || config_.wow_flavor_id.has_value()) return;
+    if (flavors_.all().empty()) refreshFlavors(); // first run, or the file was removed
+    // Match the names as shown first, then CurseForge's own, so renaming a
+    // flavor in Settings does not stop its folder from being recognised.
+    const std::string folder = config_.wowFolderName();
+    auto id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(), folder);
+    if (!id.has_value()) id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(true), folder);
+    if (!id.has_value()) return; // unknown folder name: the user picks one in Settings
+    config_.wow_flavor_id = *id;
+    config_.wow_flavor_name = flavors_.nameFor(*id);
+    config_.save();
+    emitConfig();
 }
 
 void WamWorker::initialize() {
@@ -99,8 +110,11 @@ void WamWorker::initialize() {
         }
     }
 
+    flavors_ = FlavorCache::load();
+    emitFlavors();  // the cached flavors are usable before (or without) the network
     emitConfig();
     emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+    refreshFlavors();
     detectFlavor();
 }
 
@@ -109,6 +123,7 @@ void WamWorker::setApiKey(const QString& key) {
     config_.save();
     client_.emplace(*config_.curseforge_api_key);
     emitConfig();
+    refreshFlavors();
     detectFlavor();
 }
 
@@ -127,7 +142,7 @@ void WamWorker::setWowFlavor(qint64 flavorTypeId) {
         config_.wow_flavor_name.reset();
     } else {
         config_.wow_flavor_id = flavorTypeId;
-        config_.wow_flavor_name = client_ ? flavorNameFor(*client_, flavorTypeId) : std::string();
+        config_.wow_flavor_name = flavors_.nameFor(flavorTypeId);
     }
     config_.save();
     emitConfig();
@@ -144,14 +159,19 @@ void WamWorker::search(const QString& query) {
     }
 }
 
-void WamWorker::listGameVersionTypes() {
-    auto* client = requireClient("listGameVersionTypes");
-    if (!client) return;
-    try {
-        emit gameVersionTypesLoaded(toQList<wam::GameVersionType>(client->listGameVersionTypes()));
-    } catch (const std::exception& e) {
-        emit errorOccurred("listGameVersionTypes", QString::fromStdString(e.what()));
+void WamWorker::renameFlavor(const QString& slug, const QString& name) {
+    if (!flavors_.rename(slug.toStdString(), name.trimmed().toStdString())) {
+        emit errorOccurred("renameFlavor", "Unknown flavor '" + slug + "'.");
+        return;
     }
+    flavors_.save();
+    // The WoW folder's flavor is stored with its display name.
+    if (config_.wow_flavor_id.has_value()) {
+        config_.wow_flavor_name = flavors_.nameFor(*config_.wow_flavor_id, config_.wow_flavor_name.value_or(""));
+        config_.save();
+        emitConfig();
+    }
+    emitFlavors();
 }
 
 void WamWorker::getFiles(qint64 modId, qint64 flavorTypeId) {
@@ -214,18 +234,16 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
 
         InstalledAddon rec;
         rec.modId = modId;
-        rec.fileId = file.id;
         rec.displayName = mod.name;
-        rec.fileName = file.fileName;
-        rec.channel = file.releaseType;
-        rec.gameVersions = file.gameVersions;
+        recordFile(rec, file);
+        rec.modSlug = mod.slug;
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
         rec.iconUrl = !mod.logoUrl.empty() ? mod.logoUrl : (existing ? existing->iconUrl : std::string());
         if (flavorTypeId != 0) {
             rec.flavorTypeId = flavorTypeId;
-            rec.flavorName = flavorNameFor(*client, flavorTypeId);
+            rec.flavorName = flavors_.nameFor(flavorTypeId);
         } else if (existing.has_value()) {
             rec.flavorTypeId = existing->flavorTypeId;
             rec.flavorName = existing->flavorName;
@@ -259,6 +277,8 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
         rec.fileId = fileId;
         rec.displayName = existing ? existing->displayName : "mod " + std::to_string(modId);
         rec.fileName = zip.filename().string();
+        rec.fileDisplayName.clear(); // the previous version's details no longer apply
+        rec.fileDate.clear();
         rec.channel = existing ? existing->channel : ReleaseChannel::Release;
         rec.gameVersions.clear();
 
@@ -267,21 +287,21 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
                 auto mod = client_->getMod(modId);
                 auto file = client_->getFile(modId, fileId);
                 rec.displayName = mod.name;
-                rec.fileName = file.fileName;
-                rec.channel = file.releaseType;
-                rec.gameVersions = file.gameVersions;
+                recordFile(rec, file);
+                rec.modSlug = mod.slug;
                 if (!mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
             } catch (const std::exception&) {}
         }
         if (flavorTypeId != 0) {
             rec.flavorTypeId = flavorTypeId;
-            rec.flavorName = client_ ? flavorNameFor(*client_, flavorTypeId) : std::string();
+            rec.flavorName = flavors_.nameFor(flavorTypeId);
         }
 
         rec.folders = AddonInstaller::installZip(zip, config_.addonsDir(),
                                                  existing ? existing->folders : std::vector<std::string>{});
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = true;
+        rec.adopted = false; // wam installed these files now
 
         state_.upsert(rec);
         state_.save();
@@ -290,6 +310,18 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
     } catch (const std::exception& e) {
         emit errorOccurred("installManual", QString::fromStdString(e.what()));
     }
+}
+
+// The flavor to look files up in for an addon: its own, or for an adopted
+// addon that has none yet, the WoW folder's (that is where it lives).
+qint64 WamWorker::effectiveFlavor(const InstalledAddon& a) const {
+    return a.flavorTypeId != 0 ? static_cast<qint64>(a.flavorTypeId)
+                               : static_cast<qint64>(config_.wow_flavor_id.value_or(0));
+}
+
+void WamWorker::checkOneUpdate(qint64 modId) {
+    checkUpdate(modId, QString());
+    emit singleCheckFinished(modId);
 }
 
 void WamWorker::checkUpdate(qint64 modId, const QString& channel) {
@@ -307,7 +339,8 @@ void WamWorker::checkUpdate(qint64 modId, const QString& channel) {
         ReleaseChannel ch = channel.isEmpty() ? existing->channel : parseChannel(channel);
 
         // Stay within the flavor this addon was installed for (0 = unknown, unfiltered).
-        auto files = client->getFiles(modId, optId(existing->flavorTypeId));
+        const qint64 flavorId = effectiveFlavor(*existing);
+        auto files = client->getFiles(modId, optId(flavorId));
         auto chosen = CurseForgeClient::selectBestFile(files, ch);
         if (!chosen.has_value() || chosen->id == existing->fileId) {
             emit upToDate(modId, name);
@@ -326,7 +359,7 @@ void WamWorker::checkUpdate(qint64 modId, const QString& channel) {
 
         const std::string icon = !mod.logoUrl.empty() ? mod.logoUrl : existing->iconUrl;
         emit updateAvailable(modId, name, QString::fromStdString(mod.slug), QString::fromStdString(icon),
-                             QString::fromStdString(existing->flavorName), current, *chosen);
+                             QString::fromStdString(flavors_.nameFor(flavorId, existing->flavorName)), current, *chosen);
     } catch (const std::exception& e) {
         emit errorOccurred("checkUpdate", QString::fromStdString(e.what()));
     }
@@ -358,8 +391,8 @@ void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
 
     try {
         auto file = client_->getFile(modId, fileId); // re-fetch: the files list can move between check and apply
+        auto mod = client_->getMod(modId);            // for the page slug
         if (file.isBlocked()) {
-            auto mod = client_->getMod(modId);
             emit downloadBlocked(modId, QString::fromStdString(mod.name), QString::fromStdString(mod.slug),
                                  file.id, QString::fromStdString(file.fileName));
             return fail("Third-party downloads are blocked by the author.");
@@ -375,13 +408,16 @@ void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
         auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir, existing->folders);
 
         InstalledAddon rec = *existing; // keeps flavorTypeId/flavorName
-        rec.fileId = file.id;
-        rec.fileName = file.fileName;
-        rec.channel = file.releaseType;
-        rec.gameVersions = file.gameVersions;
+        recordFile(rec, file);
+        rec.modSlug = mod.slug;
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
+        rec.adopted = false; // wam downloaded and installed these files now
+        if (rec.flavorTypeId == 0 && effectiveFlavor(rec) != 0) { // an adopted addon learns its flavor here
+            rec.flavorTypeId = effectiveFlavor(rec);
+            rec.flavorName = flavors_.nameFor(rec.flavorTypeId);
+        }
 
         state_.upsert(rec);
         state_.save();
@@ -401,7 +437,7 @@ void WamWorker::setFlavor(qint64 modId, qint64 flavorTypeId) {
     }
     InstalledAddon rec = *existing;
     rec.flavorTypeId = flavorTypeId;
-    rec.flavorName = client_ ? flavorNameFor(*client_, flavorTypeId) : std::string();
+    rec.flavorName = flavors_.nameFor(flavorTypeId);
     state_.upsert(rec);
     state_.save();
     emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
@@ -519,31 +555,101 @@ void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSibl
     if (rescan) scan();
 }
 
-void WamWorker::backfillIcons() {
+void WamWorker::backfillDetails() {
     if (!client_) return;
-    std::vector<int64_t> ids;
-    for (const auto& a : state_.all())
-        if (a.modId != 0 && a.iconUrl.empty()) ids.push_back(a.modId);
-    if (ids.empty()) return;
-
     bool changed = false;
+
+    // Icons and page slugs, from the mods: one batched request per 50.
+    std::vector<int64_t> modIds;
+    for (const auto& a : state_.all())
+        if (a.modId != 0 && (a.iconUrl.empty() || (a.fileId != 0 && a.modSlug.empty()))) modIds.push_back(a.modId);
     try {
-        for (size_t i = 0; i < ids.size(); i += 50) {
-            std::vector<int64_t> chunk(ids.begin() + i, ids.begin() + std::min(ids.size(), i + 50));
+        for (size_t i = 0; i < modIds.size(); i += 50) {
+            std::vector<int64_t> chunk(modIds.begin() + i, modIds.begin() + std::min(modIds.size(), i + 50));
             for (const auto& mod : client_->getMods(chunk)) {
-                if (mod.logoUrl.empty()) continue;
                 auto existing = state_.find(mod.id);
                 if (!existing) continue;
                 InstalledAddon rec = *existing;
-                rec.iconUrl = mod.logoUrl;
-                state_.upsert(rec);
-                changed = true;
+                if (rec.iconUrl.empty() && !mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
+                if (rec.modSlug.empty()) rec.modSlug = mod.slug;
+                if (rec.iconUrl != existing->iconUrl || rec.modSlug != existing->modSlug) {
+                    state_.upsert(rec);
+                    changed = true;
+                }
             }
         }
     } catch (const std::exception&) {}
+
+    // Version names and upload dates of installed files that predate them.
+    std::vector<int64_t> fileIds;
+    for (const auto& a : state_.all())
+        if (a.fileId != 0 && (a.fileDate.empty() || a.fileDisplayName.empty())) fileIds.push_back(a.fileId);
+    try {
+        for (size_t i = 0; i < fileIds.size(); i += 50) {
+            std::vector<int64_t> chunk(fileIds.begin() + i, fileIds.begin() + std::min(fileIds.size(), i + 50));
+            for (const auto& file : client_->getFilesByIds(chunk)) {
+                auto existing = state_.find(file.modId);
+                if (!existing || existing->fileId != file.id) continue;
+                InstalledAddon rec = *existing;
+                if (rec.fileDisplayName.empty()) rec.fileDisplayName = file.displayName;
+                if (rec.fileDate.empty()) rec.fileDate = file.fileDate;
+                if (rec.fileDisplayName != existing->fileDisplayName || rec.fileDate != existing->fileDate) {
+                    state_.upsert(rec);
+                    changed = true;
+                }
+            }
+        }
+    } catch (const std::exception&) {}
+
     if (changed) {
         state_.save();
         emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+    }
+}
+
+void WamWorker::linkFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
+    auto existing = state_.find(modId);
+    if (!existing) {
+        emit errorOccurred("link", "Mod " + QString::number(modId) + " is not tracked.");
+        return;
+    }
+    auto* client = requireClient("link");
+    if (!client) return;
+    try {
+        auto mod = client->getMod(modId);
+        auto file = client->getFile(modId, fileId);
+
+        // Only bookkeeping: nothing is downloaded and nothing on disk changes.
+        InstalledAddon rec = *existing;
+        rec.displayName = mod.name;
+        recordFile(rec, file);
+        rec.modSlug = mod.slug;
+        if (!mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
+        // The flavor comes from the flavor the file was picked under; CurseForge
+        // only lists the file there if it is built for that flavor.
+        if (flavorTypeId != 0) {
+            rec.flavorTypeId = flavorTypeId;
+            rec.flavorName = flavors_.nameFor(flavorTypeId);
+        }
+
+        state_.upsert(rec);
+        state_.save();
+        emit linked(modId, QString::fromStdString(rec.displayName));
+        emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+    } catch (const std::exception& e) {
+        emit errorOccurred("link", QString::fromStdString(e.what()));
+    }
+}
+
+void WamWorker::loadChangelog(qint64 modId, qint64 fileId) {
+    if (!client_) {
+        emit changelogFailed(fileId, "No CurseForge API key configured.");
+        return;
+    }
+    try {
+        emit changelogLoaded(fileId, QString::fromStdString(htmlToPlainText(client_->getFileChangelog(modId, fileId))));
+    } catch (const std::exception& e) {
+        emit changelogFailed(fileId, QString::fromStdString(e.what()));
     }
 }
 
