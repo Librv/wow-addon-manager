@@ -4,8 +4,12 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 // Install window for one addon: pick the flavor, the release type and the
-// version. The flavor starts as the WoW folder's flavor from Settings; changing
-// it here only affects this install, and refetches the version list.
+// version. The flavor starts as the WoW folder's flavor from Settings (or the
+// addon's own); changing it here only affects this addon, and refetches the
+// version list.
+//
+// In link mode the same window is used to tell wam which CurseForge file an
+// adopted addon matches: the button says "Link" and nothing is downloaded.
 Kirigami.Dialog {
     id: dialog
 
@@ -13,6 +17,7 @@ Kirigami.Dialog {
     property string modName
     property string iconUrl
     property var selectedId: 0        // file id of the chosen version, 0 = none
+    property bool linkMode: false
     readonly property bool hasVersions: wam.installFiles.count > 0
     // Loaded, and there is nothing to install (or it failed): worth showing in red.
     readonly property bool problem: flavorBox.currentIndex >= 0 && !wam.installFiles.loading && !hasVersions
@@ -20,22 +25,25 @@ Kirigami.Dialog {
     signal installStarted(string name)
     signal settingsRequested()
 
-    title: qsTr("Install %1").arg(modName)
+    title: linkMode ? qsTr("Link %1 to CurseForge").arg(modName) : qsTr("Install %1").arg(modName)
     preferredWidth: Kirigami.Units.gridUnit * 30
     padding: Kirigami.Units.largeSpacing
     showCloseButton: true
     standardButtons: Kirigami.Dialog.Cancel
 
-    function openFor(id, name, icon) {
+    // preferredFlavorId: the flavor to start on (0 = the WoW folder's).
+    function openFor(id, name, icon, preferredFlavorId, link) {
         modId = id
         modName = name
         iconUrl = icon
+        linkMode = !!link
         selectedId = 0
         const flavors = wam.flavorsForInstall(id)
         flavorBox.model = flavors
-        // The WoW folder's flavor, else the only choice, else make the user pick.
+        // The wanted flavor, else the only choice, else make the user pick.
+        const want = preferredFlavorId > 0 ? preferredFlavorId : wam.wowFlavorId
         let start = -1
-        for (let i = 0; i < flavors.length; ++i) if (flavors[i].id === wam.wowFlavorId) start = i
+        for (let i = 0; i < flavors.length; ++i) if (flavors[i].id === want) start = i
         if (start < 0 && flavors.length === 1) start = 0
         flavorBox.currentIndex = start
         channelBox.currentIndex = 0
@@ -65,13 +73,18 @@ Kirigami.Dialog {
 
     customFooterActions: [
         Kirigami.Action {
-            text: qsTr("Install")
-            icon.name: "download"
-            enabled: wam.hasWowPath && dialog.selectedId !== 0 && flavorBox.currentIndex >= 0
+            text: dialog.linkMode ? qsTr("Link") : qsTr("Install")
+            icon.name: dialog.linkMode ? "insert-link" : "download"
+            // Linking records a version; it needs neither the WoW folder nor a download.
+            enabled: (dialog.linkMode || wam.hasWowPath) && dialog.selectedId !== 0 && flavorBox.currentIndex >= 0
                      && !wam.installFiles.loading
             onTriggered: {
-                wam.installFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
-                dialog.installStarted(dialog.modName)
+                if (dialog.linkMode) {
+                    wam.linkFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
+                } else {
+                    wam.installFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
+                    dialog.installStarted(dialog.modName)
+                }
                 dialog.close()
             }
         }
@@ -86,9 +99,15 @@ Kirigami.Dialog {
             Kirigami.Heading { level: 2; text: dialog.modName; elide: Text.ElideRight; Layout.fillWidth: true }
         }
 
+        FieldNote {
+            Layout.fillWidth: true
+            visible: dialog.linkMode
+            text: qsTr("Pick the version that matches what is installed. Nothing is downloaded and nothing in your AddOns folder changes. The addon's flavor is taken from the flavor you pick here.")
+        }
+
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: !wam.hasWowPath
+            visible: !dialog.linkMode && !wam.hasWowPath
             type: Kirigami.MessageType.Warning
             text: qsTr("Set your WoW folder in Settings before installing.")
             actions: Kirigami.Action {

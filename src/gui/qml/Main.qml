@@ -38,7 +38,8 @@ Kirigami.ApplicationWindow {
         if (query) page.runQuery(query)
     }
     function openScan() { scanDialog.open() }
-    function openInstall(modId, name, iconUrl) { installDialog.openFor(modId, name, iconUrl) }
+    function openInstall(modId, name, iconUrl, preferredFlavorId) { installDialog.openFor(modId, name, iconUrl, preferredFlavorId || 0, false) }
+    function openLink(modId, name, iconUrl, preferredFlavorId) { installDialog.openFor(modId, name, iconUrl, preferredFlavorId || 0, true) }
     function showSettings() { showPage("SettingsPage.qml") }
     function checkUpdates() {
         if (!wam.checkingUpdates) {
@@ -82,6 +83,9 @@ Kirigami.ApplicationWindow {
         target: wam
         function onErrorOccurred(context, message) { root.showPassiveNotification(context + ": " + message, "long") }
         function onInstallFinished(modId, name) { root.showPassiveNotification(qsTr("Installed %1").arg(name)) }
+        function onAddonUpToDate(modId, name) { root.showPassiveNotification(qsTr("%1 is up to date").arg(name)) }
+        function onUpdateFound(modId) { updatesDialog.open() }
+        function onLinked(modId, name) { root.showPassiveNotification(qsTr("Linked %1 to CurseForge").arg(name)) }
         function onAdopted(modId, name, folderCount) {
             root.showPassiveNotification(qsTr("Adopted %1 (%2 folder(s))").arg(name).arg(folderCount))
         }
