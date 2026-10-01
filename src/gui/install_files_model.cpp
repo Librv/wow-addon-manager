@@ -1,6 +1,5 @@
 #include "gui/install_files_model.hpp"
-#include <QDateTime>
-#include <QLocale>
+#include "gui/format.hpp"
 #include <algorithm>
 
 namespace wam::gui {
@@ -19,11 +18,7 @@ InstallFile InstallFile::fromCurseForge(const wam::CurseForgeFile& f) {
         out.gameVersions = QString::fromStdString(f.gameVersions.front());
         if (f.gameVersions.size() > 1) out.gameVersions += QString(" +%1").arg(f.gameVersions.size() - 1);
     }
-    if (!f.fileDate.empty()) {
-        QDateTime dt = QDateTime::fromString(QString::fromStdString(f.fileDate), Qt::ISODateWithMs);
-        if (!dt.isValid()) dt = QDateTime::fromString(QString::fromStdString(f.fileDate), Qt::ISODate);
-        if (dt.isValid()) out.date = QLocale::c().toString(dt.toUTC().date(), "MMM d, yyyy");
-    }
+    out.date = formatIsoDate(f.fileDate);
     out.blocked = f.isBlocked();
     return out;
 }
