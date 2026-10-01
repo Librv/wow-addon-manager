@@ -63,6 +63,7 @@ if(WAM_BUILD_GUI)
         QML_FILES
             src/gui/qml/Main.qml
             src/gui/qml/AddonIcon.qml
+            src/gui/qml/FieldNote.qml
             src/gui/qml/InstallDialog.qml
             src/gui/qml/InstalledPage.qml
             src/gui/qml/SearchPage.qml
