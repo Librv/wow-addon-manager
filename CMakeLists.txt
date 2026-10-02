@@ -60,6 +60,7 @@ if(WAM_BUILD_GUI)
     qt_add_qml_module(wam-gui
         URI Wam
         VERSION 1.0
+        RESOURCE_PREFIX /qt/qml
         QML_FILES
             src/gui/qml/Main.qml
             src/gui/qml/AddonIcon.qml
