@@ -25,6 +25,14 @@ QString versionOf(const wam::InstalledAddon& a) {
     return name.empty() ? QStringLiteral("Unknown") : QString::fromStdString(name);
 }
 
+// The zip's file name, shown after the version. Empty when it adds nothing:
+// no zip name, or the version text already is the zip name.
+QString zipNameOf(const wam::InstalledAddon& a) {
+    if (a.fileId == 0 || a.fileName.empty() || a.fileDisplayName.empty() || a.fileDisplayName == a.fileName)
+        return {};
+    return QString::fromStdString(a.fileName);
+}
+
 QString sourceOf(const wam::InstalledAddon& a) {
     if (a.fileId == 0) return QStringLiteral("Adopted from an existing folder");
     if (a.adopted) return QStringLiteral("Adopted, linked to CurseForge");
@@ -55,6 +63,7 @@ QVariant InstalledAddonsModel::data(const QModelIndex& index, int role) const {
         case ReleasedTextRole:     return formatIsoDate(a.fileDate);
         case InstalledTextRole:    return formatIsoDateTimeLocal(a.installedAt);
         case SourceTextRole:       return sourceOf(a);
+        case ZipNameTextRole:      return zipNameOf(a);
         case LinkedRole:           return a.fileId != 0;
         case ModSlugRole:          return QString::fromStdString(a.modSlug);
         case FileIdRole:           return static_cast<qint64>(a.fileId);
@@ -80,6 +89,7 @@ QHash<int, QByteArray> InstalledAddonsModel::roleNames() const {
         {ReleasedTextRole, "releasedText"}, {InstalledTextRole, "installedText"}, {SourceTextRole, "sourceText"},
         {LinkedRole, "linked"}, {ModSlugRole, "modSlug"}, {FileIdRole, "fileId"},
         {ChangelogStateRole, "changelogState"}, {ChangelogTextRole, "changelogText"},
+        {ZipNameTextRole, "zipNameText"},
     };
 }
 

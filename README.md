@@ -118,10 +118,11 @@ your search text or results.
   - a **refresh button** checks that one addon for updates (the result is a
     notification, or the update popup if one is found);
   - an **arrow** opens the details. Any number of rows can be open at once, and
-    they stay open while you scroll. The details are the version, release
+    they stay open while you scroll. The details are the version (with the zip's file name after it), release
     channel, flavor, release date, install time and source; the folders the
-    addon owns; the changelog of the installed version as plain text (six
-    lines, "Show more" for the rest, fetched when the details open); and
+    addon owns; the changelog of the installed version, rendered as markdown on a darker
+    panel (about six lines, then "... Show more" in link colour right after the
+    last word shown; fetched when the details open); and
     **View on CurseForge**, which only appears once the addon is tied to a
     CurseForge file;
   - the overflow menu removes the addon (deleting its folders) or stops
@@ -197,6 +198,37 @@ All network and disk work runs on a single worker thread, so the window
 stays responsive during searches, downloads and updates. Requests are
 processed one at a time, in order, so an Apply clicked while an update check
 is still running waits behind the remaining checks.
+
+## Working on the UI
+
+The views are small components under `src/gui/qml/`, so a change usually
+touches one file:
+
+| File | What it is |
+| --- | --- |
+| `Main.qml` | window, sidebar, popups wiring |
+| `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows are open |
+| `AddonRow.qml` | one installed addon: header line; raises signals, owns no state |
+| `AddonDetails.qml` | the expandable details (facts, folders, changelog, buttons) |
+| `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
+| `FolderChip.qml`, `AddonIcon.qml`, `FieldNote.qml` | small shared pieces |
+| `SearchPage.qml`, `SettingsPage.qml`, `InstallDialog.qml`, `UpdatesDialog.qml`, `ScanDialog.qml` | the other pages and popups |
+
+Components with knobs (colours, line counts, texts) keep them in a "Tunables"
+block at the top. `AddonDetails` receives the list row as `addon`, so a new
+model role is usable there as `addon.role` without further plumbing.
+
+To see edits without rebuilding, run the GUI against the source folder:
+
+```sh
+WAM_QML_DIR=$PWD/src/gui/qml ./build/wam-gui     # fish: env WAM_QML_DIR=(pwd)/src/gui/qml ./build/wam-gui
+```
+
+It loads the QML from disk and reloads the window every time a `.qml` file in
+that folder is saved (a file with a syntax error is reported on the terminal
+and the window comes back once it is fixed). Without the variable the app uses
+the QML compiled into the binary. New `.qml` files still need adding to
+`QML_FILES` in `CMakeLists.txt` for normal builds.
 
 ## Using the CLI
 
