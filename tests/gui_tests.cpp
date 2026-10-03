@@ -375,7 +375,7 @@ void testControllerEndToEnd() {
         check(c.wowFlavorName() == "Ever", "and it is stored with its display name");
         c.renameFlavor("wow-forever", "Forever!");
         check(waitFor([&] { return c.wowFlavorName() == "Forever!"; }), "renaming a flavor updates the WoW folder's stored flavor name");
-        check(c.flavors()[1].toMap().value("name").toString() == "Forever!", "and the flavor list");
+        check(waitFor([&] { return c.flavors()[1].toMap().value("name").toString() == "Forever!"; }), "and the flavor list");
         check(wam::FlavorCache::load().nameFor(40) == "Forever!", "and flavors.json on disk");
         c.setWowPath(tmp.path() + "/wow");
         check(waitFor([&] { return !c.wowFlavorId() && c.hasWowPath(); }), "a folder that names no flavor leaves it unknown");
