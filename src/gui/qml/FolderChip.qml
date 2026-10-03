@@ -11,6 +11,8 @@ Rectangle {
     implicitHeight: label.implicitHeight + Kirigami.Units.smallSpacing * 2
     radius: Kirigami.Units.smallSpacing
     color: Kirigami.Theme.alternateBackgroundColor
+    border.width: 1
+    border.color: AppColors.border
 
     QQC2.Label {
         id: label

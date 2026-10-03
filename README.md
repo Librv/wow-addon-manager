@@ -211,6 +211,8 @@ touches one file:
 | `AddonRow.qml` | one installed addon: header line; raises signals, owns no state |
 | `AddonDetails.qml` | the expandable details (facts, folders, changelog, buttons) |
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
+| `AppColors.qml` | the colour palette (page background, inset field colour, border); change colours here |
+| `StyledPage.qml` | base of every page, gives them the shared background |
 | `FolderChip.qml`, `AddonIcon.qml`, `FieldNote.qml` | small shared pieces |
 | `SearchPage.qml`, `SettingsPage.qml`, `InstallDialog.qml`, `UpdatesDialog.qml`, `ScanDialog.qml` | the other pages and popups |
 
@@ -228,7 +230,13 @@ It loads the QML from disk and reloads the window every time a `.qml` file in
 that folder is saved (a file with a syntax error is reported on the terminal
 and the window comes back once it is fixed). Without the variable the app uses
 the QML compiled into the binary. New `.qml` files still need adding to
-`QML_FILES` in `CMakeLists.txt` for normal builds.
+`WAM_QML_FILES` in `CMakeLists.txt` for normal builds. `src/gui/qml/qmldir`
+exists only for dev mode, so that the `AppColors` singleton is found when
+loading from disk; a new singleton has to be listed there too.
+
+The palette is three fixed hex colours sampled from the Breeze Dark settings
+page, so surfaces look the same on any system scheme (text and icons still
+follow the system theme).
 
 ## Using the CLI
 

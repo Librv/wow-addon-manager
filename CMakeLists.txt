@@ -57,24 +57,27 @@ if(WAM_BUILD_GUI)
     target_link_libraries(wam_gui PUBLIC wam_core Qt6::Core Qt6::Gui Qt6::Qml)
 
     qt_add_executable(wam-gui src/gui/main.cpp)
+
+    # Every QML file sits flat in the module (QT_RESOURCE_ALIAS), next to the
+    # generated qmldir, which is what makes the AppColors singleton visible to
+    # the other files. src/gui/qml/qmldir is the hand-kept twin of that for
+    # WAM_QML_DIR dev mode, so list a new singleton in both.
+    set(WAM_QML_FILES
+        Main AddonDetails AddonIcon AddonRow AppColors ChangelogBox FieldNote FolderChip
+        InstallDialog InstalledPage ScanDialog SearchPage SettingsPage StyledPage UpdatesDialog)
+    set(WAM_QML_SOURCES)
+    foreach(f ${WAM_QML_FILES})
+        set(src src/gui/qml/${f}.qml)
+        set_source_files_properties(${src} PROPERTIES QT_RESOURCE_ALIAS ${f}.qml)
+        list(APPEND WAM_QML_SOURCES ${src})
+    endforeach()
+    set_source_files_properties(src/gui/qml/AppColors.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
     qt_add_qml_module(wam-gui
         URI Wam
         VERSION 1.0
         RESOURCE_PREFIX /qt/qml
-        QML_FILES
-            src/gui/qml/Main.qml
-            src/gui/qml/AddonDetails.qml
-            src/gui/qml/AddonIcon.qml
-            src/gui/qml/AddonRow.qml
-            src/gui/qml/ChangelogBox.qml
-            src/gui/qml/FieldNote.qml
-            src/gui/qml/FolderChip.qml
-            src/gui/qml/InstallDialog.qml
-            src/gui/qml/InstalledPage.qml
-            src/gui/qml/SearchPage.qml
-            src/gui/qml/ScanDialog.qml
-            src/gui/qml/SettingsPage.qml
-            src/gui/qml/UpdatesDialog.qml
+        QML_FILES ${WAM_QML_SOURCES}
     )
     target_link_libraries(wam-gui PRIVATE wam_gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2)
 
