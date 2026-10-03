@@ -1,4 +1,5 @@
 #include "gui/flavors_model.hpp"
+#include "core/flavor_cache.hpp"
 
 namespace wam::gui {
 
@@ -14,7 +15,8 @@ QVariant FlavorsModel::data(const QModelIndex& index, int role) const {
         case FlavorIdRole: return e.id;
         case NameRole:     return e.name;
         case ApiNameRole:  return e.apiName;
-        case EditedRole:   return !e.apiName.isEmpty() && e.name != e.apiName;
+        case EditedRole:   return !e.apiName.isEmpty() &&
+                                  e.name != QString::fromStdString(wam::FlavorCache::defaultName(e.apiName.toStdString()));
         default: return {};
     }
 }
