@@ -4,7 +4,7 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Kirigami.ScrollablePage {
+StyledPage {
     title: qsTr("Settings")
 
     Kirigami.FormLayout {

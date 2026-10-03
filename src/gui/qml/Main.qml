@@ -13,6 +13,7 @@ Kirigami.ApplicationWindow {
     minimumWidth: Kirigami.Units.gridUnit * 40
     minimumHeight: Kirigami.Units.gridUnit * 25
     visible: true
+    color: AppColors.background
 
     property var manualTarget: ({ modId: 0, fileId: 0 })
 
@@ -63,6 +64,14 @@ Kirigami.ApplicationWindow {
         modal: false
         collapsible: true
         collapsed: false
+        background: Rectangle {
+            color: AppColors.background
+            Rectangle { // the edge line against the page
+                anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
+                width: 1
+                color: AppColors.border
+            }
+        }
         actions: [
             Kirigami.PagePoolAction {
                 text: qsTr("AddOns"); icon.name: "view-list-details"

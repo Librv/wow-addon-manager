@@ -3,7 +3,7 @@ import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Kirigami.ScrollablePage {
+StyledPage {
     id: page
     title: qsTr("Installed AddOns")
     readonly property var win: QQC2.ApplicationWindow.window

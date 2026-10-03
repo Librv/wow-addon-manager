@@ -1,0 +1,2 @@
+module Wam
+singleton AppColors 1.0 AppColors.qml

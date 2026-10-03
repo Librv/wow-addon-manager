@@ -16,10 +16,6 @@ Rectangle {
 
     // ---- Tunables ---------------------------------------------------------
     property int collapsedLines: 6
-    property real lightDarkening: 1.15                  // light themes: Qt.darker factor for the panel
-    property real darkShade: 0.55                       // dark themes: how much black is mixed into the panel
-    property color borderColor: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                        Kirigami.Theme.textColor.b, 0.14)
     property real padding: Kirigami.Units.largeSpacing
     property color linkColor: Kirigami.Theme.linkColor  // "Show more" / "Show less"
     property string moreText: qsTr("Show more")
@@ -48,13 +44,9 @@ Rectangle {
     property real cutY: 0
     property real cutHeight: 0
 
-    // Always darker than the page behind it. On a dark theme the page is already
-    // near black, so a plain Qt.darker barely shows; mix black in instead.
-    readonly property bool darkTheme: Kirigami.Theme.backgroundColor.hslLightness < 0.5
-    color: darkTheme ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.rgba(0, 0, 0, darkShade))
-                     : Qt.darker(Kirigami.Theme.backgroundColor, lightDarkening)
+    color: AppColors.field
     border.width: 1
-    border.color: borderColor
+    border.color: AppColors.border
     radius: Kirigami.Units.smallSpacing
     implicitHeight: body.height + padding * 2
 
