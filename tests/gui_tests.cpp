@@ -258,6 +258,12 @@ void testInstalledRowTexts() {
     check(role(3, InstalledAddonsModel::SourceTextRole) == "Adopted, linked to CurseForge", "an adopted addon that was linked says so");
     check(role(4, InstalledAddonsModel::SourceTextRole) == "Manual file", "a manually installed addon says so");
 
+    check(role(1, InstalledAddonsModel::ZipNameTextRole) == "EllesmereUI-v9.3.2.zip",
+          "a linked addon shows its zip name after the version");
+    check(role(0, InstalledAddonsModel::ZipNameTextRole).isEmpty() && role(2, InstalledAddonsModel::ZipNameTextRole).isEmpty() &&
+          role(3, InstalledAddonsModel::ZipNameTextRole).isEmpty(),
+          "no zip name when the version text already is the zip name, or the addon is adopted");
+
     m.setFlavorNames({{10, "Retail (Midnight)"}});
     check(role(1, InstalledAddonsModel::DescriptionRole).contains("Retail (Midnight)"), "a flavor rename shows in the description");
 

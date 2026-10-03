@@ -63,8 +63,12 @@ if(WAM_BUILD_GUI)
         RESOURCE_PREFIX /qt/qml
         QML_FILES
             src/gui/qml/Main.qml
+            src/gui/qml/AddonDetails.qml
             src/gui/qml/AddonIcon.qml
+            src/gui/qml/AddonRow.qml
+            src/gui/qml/ChangelogBox.qml
             src/gui/qml/FieldNote.qml
+            src/gui/qml/FolderChip.qml
             src/gui/qml/InstallDialog.qml
             src/gui/qml/InstalledPage.qml
             src/gui/qml/SearchPage.qml
