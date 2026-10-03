@@ -64,6 +64,9 @@ FlavorCache FlavorCache::load() {
                 continue;
             }
             if (e.name.empty()) e.name = defaultName(e.apiName.empty() ? e.slug : e.apiName);
+            // A cache saved before the prefix was dropped holds the full name in both fields:
+            // not an edit, so it shows the default form right away, without waiting for a refresh.
+            else if (!e.apiName.empty() && e.name == e.apiName) e.name = defaultName(e.apiName);
             cache.entries_.push_back(std::move(e));
         }
     } catch (const std::exception&) {

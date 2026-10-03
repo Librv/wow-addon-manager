@@ -57,10 +57,11 @@ void testMigration(const fs::path& dir) {
         R"({"wow-forever": {"id": 40, "name": "WoW Forever", "api_name": "WoW Forever"},
             "wow-retail": {"id": 10, "name": "Live", "api_name": "WoW Retail"}})";
     auto c = FlavorCache::load();
-    check(c.nameFor(40) == "WoW Forever", "loading alone leaves a stored name as it is");
+    check(c.nameFor(40) == "Forever" && c.findById(40)->apiName == "WoW Forever",
+          "loading an old, unedited full name shows the default form straight away (no refresh needed)");
+    check(c.nameFor(10) == "Live", "an old edited name is kept on load");
     c.merge({{40, "WoW Forever", "wow-forever"}, {10, "WoW Retail", "wow-retail"}});
-    check(c.nameFor(40) == "Forever", "an old, unedited full name migrates on the next refresh");
-    check(c.nameFor(10) == "Live", "an old edited name is kept");
+    check(c.nameFor(40) == "Forever" && c.nameFor(10) == "Live", "and a refresh keeps both as they are");
 
     // Hand-written short form with no names at all falls back to the slug, also prefix-free.
     std::ofstream(FlavorCache::path()) << R"({"wow-forever": ""})";
