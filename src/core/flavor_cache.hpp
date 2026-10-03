@@ -20,7 +20,7 @@ struct FlavorEntry {
 // before (and without) the network, and so the user can rename them.
 //
 // flavors.json sits next to config.json and maps each CurseForge key to its
-// entry:  { "wow-forever": { "id": 12345, "name": "Forever", "api_name": "Forever" } }
+// entry:  { "wow-forever": { "id": 12345, "name": "Forever", "api_name": "WoW Forever" } }
 // The app refreshes it from CurseForge at startup (merge()); the user edits
 // display names in Settings (rename()) or by hand.
 class FlavorCache {
@@ -52,6 +52,11 @@ public:
     // The key used for a flavor: CurseForge's slug, or a slug made from its
     // name when CurseForge gives none.
     static std::string keyFor(const GameVersionType& t);
+
+    // The name shown by default for a CurseForge name: a leading "WoW" and
+    // its separators are dropped ("WoW Forever" -> "Forever"). Unchanged if
+    // nothing would be left, or if "WoW" is just the start of a longer word.
+    static std::string defaultName(const std::string& apiName);
 
 private:
     std::vector<FlavorEntry> entries_;
