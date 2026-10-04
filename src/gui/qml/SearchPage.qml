@@ -24,7 +24,7 @@ StyledPage {
         id: list
         model: wam.searchResults
 
-        delegate: QQC2.ItemDelegate {
+        delegate: Item {
             id: row
             required property var modId
             required property string name
@@ -32,31 +32,47 @@ StyledPage {
             required property string summary
             required property string logoUrl
             width: ListView.view.width
+            height: col.implicitHeight
 
-            contentItem: RowLayout {
-              spacing: Kirigami.Units.largeSpacing
-              AddonIcon { source: row.logoUrl; size: Kirigami.Units.iconSizes.large; Layout.alignment: Qt.AlignTop }
-              ColumnLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
-                QQC2.Label { text: row.name; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                AuthorLine { author: row.author }
-                QQC2.Label {
-                    Layout.topMargin: Kirigami.Units.largeSpacing
-                    text: row.summary
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
-                    opacity: 0.8
+            ColumnLayout {
+                id: col
+                width: parent.width
+                spacing: 0
+
+                QQC2.ItemDelegate {
                     Layout.fillWidth: true
+                    // The same space above the title as below the description.
+                    topPadding: Kirigami.Units.largeSpacing
+                    bottomPadding: Kirigami.Units.largeSpacing
+
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.largeSpacing
+                        AddonIcon { source: row.logoUrl; size: Kirigami.Units.iconSizes.large; Layout.alignment: Qt.AlignTop }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            QQC2.Label { text: row.name; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                            AuthorLine { author: row.author }
+                            QQC2.Label {
+                                Layout.topMargin: Kirigami.Units.largeSpacing
+                                text: row.summary
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                                opacity: 0.8
+                                Layout.fillWidth: true
+                            }
+                        }
+                        QQC2.Button {
+                            text: qsTr("Install")
+                            icon.name: "download"
+                            Layout.alignment: Qt.AlignVCenter
+                            onClicked: page.win.openInstall(row.modId, row.name, row.logoUrl)
+                        }
+                    }
                 }
-              }
-              QQC2.Button {
-                  text: qsTr("Install")
-                  icon.name: "download"
-                  Layout.alignment: Qt.AlignVCenter
-                  onClicked: page.win.openInstall(row.modId, row.name, row.logoUrl)
-              }
+
+                Kirigami.Separator { Layout.fillWidth: true }
             }
         }
 
