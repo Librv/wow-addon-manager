@@ -23,6 +23,13 @@ struct CurseForgeMod {
     std::string logoUrl;
     // The mod's author names from `authors`, joined with ", " (empty if none).
     std::string author;
+    // Total downloads (0 if the API gave none).
+    int64_t downloadCount = 0;
+    // The newest of the mod's `latestFiles` (highest file id): its version
+    // name (displayName, else fileName) and upload date. The date falls back
+    // to the mod's dateReleased/dateModified. Both empty if unknown.
+    std::string latestVersion;
+    std::string latestDate;
 };
 
 struct CurseForgeFile {

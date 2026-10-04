@@ -113,9 +113,13 @@ your search text or results.
 - **AddOns** (page title "Installed AddOns"): everything wam tracks, one row
   per addon, each as big as a Search result: its CurseForge icon, its name,
   "By Author" under it (filled in at startup with an API key for addons
-  recorded before authors were stored), and below that a line of details such as `v9.3.2 · Release · Retail · Sep 29,
-  2026` (an adopted addon with no file yet reads `Adopted from your AddOns
-  folder · Release · flavor not set`). On each row:
+  recorded before authors were stored), and below that a line of facts in the
+  same order as on the Search tab: download count (download icon), release
+  date of the installed file (clock icon), its version (puzzle-piece icon) and
+  the flavor (no icon), for example `1.2M · Sep 29, 2026 · v9.3.2 · Retail`.
+  An adopted addon with no file yet has no date or version and reads
+  `Adopted · flavor`. Download counts are refreshed from CurseForge at startup
+  (with an API key). On each row:
   - a **refresh button** checks that one addon for updates (the result is a
     notification, or the update popup if one is found);
   - an **arrow** opens the details. Any number of rows can be open at once, and
@@ -146,8 +150,11 @@ your search text or results.
   - **Review updates (N)** appears while updates are queued, to reopen the
     popup if you closed it early.
   - **Scan for existing addons** opens the scan window (below).
-- **Search**: search CurseForge; each result shows its name, author and summary, and has an **Install** button that
-  opens the install window (below).
+- **Search**: search CurseForge; each result shows its name, author and summary,
+  then a line with the download count (download icon), the date of the latest
+  file (clock icon) and its version (puzzle-piece icon), and has an **Install**
+  button that opens the install window (below). The icons are Breeze names set
+  in `AddonMeta.qml`'s Tunables.
 - **Settings**: CurseForge API key, WoW folder, and under it the **flavor** of
   that folder, each with its explanation directly beneath it. The flavor is
   worked out from the folder name when the path is saved (`_retail_` is
@@ -214,6 +221,7 @@ touches one file:
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
 | `AppColors.qml` | the colour palette (page background, inset field colour, border); change colours here |
 | `StyledPage.qml` | base of every page, gives them the shared background |
+| `AddonMeta.qml` | the facts line under a description (downloads, date, version, flavor), shared by Search and AddOns |
 | `AuthorLine.qml` | the "By Author" line under an addon's title (hidden while the author is unknown) |
 | `FolderChip.qml`, `AddonIcon.qml`, `FieldNote.qml` | small shared pieces |
 | `SearchPage.qml`, `SettingsPage.qml`, `InstallDialog.qml`, `UpdatesDialog.qml`, `ScanDialog.qml` | the other pages and popups |

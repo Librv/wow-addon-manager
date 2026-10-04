@@ -1,4 +1,5 @@
 #include "gui/search_results_model.hpp"
+#include "gui/format.hpp"
 
 namespace wam::gui {
 
@@ -17,6 +18,9 @@ QVariant SearchResultsModel::data(const QModelIndex& index, int role) const {
         case WebsiteUrlRole: return QString::fromStdString(m.websiteUrl);
         case LogoUrlRole:    return QString::fromStdString(m.logoUrl);
         case AuthorRole:     return QString::fromStdString(m.author);
+        case DownloadsTextRole: return formatCount(m.downloadCount);
+        case UpdatedTextRole:   return formatIsoDate(m.latestDate);
+        case VersionTextRole:   return QString::fromStdString(m.latestVersion);
         default: return {};
     }
 }
@@ -25,6 +29,7 @@ QHash<int, QByteArray> SearchResultsModel::roleNames() const {
     return {
         {ModIdRole, "modId"}, {NameRole, "name"}, {SlugRole, "slug"},
         {SummaryRole, "summary"}, {WebsiteUrlRole, "websiteUrl"}, {LogoUrlRole, "logoUrl"}, {AuthorRole, "author"},
+        {DownloadsTextRole, "downloadsText"}, {UpdatedTextRole, "updatedText"}, {VersionTextRole, "versionText"},
     };
 }
 

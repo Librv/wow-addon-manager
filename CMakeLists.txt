@@ -63,7 +63,7 @@ if(WAM_BUILD_GUI)
     # the other files. src/gui/qml/qmldir is the hand-kept twin of that for
     # WAM_QML_DIR dev mode, so list a new singleton in both.
     set(WAM_QML_FILES
-        Main AddonDetails AddonIcon AddonRow AppColors AuthorLine ChangelogBox FieldNote FolderChip
+        Main AddonDetails AddonIcon AddonMeta AddonRow AppColors AuthorLine ChangelogBox FieldNote FolderChip
         InstallDialog InstalledPage ScanDialog SearchPage SettingsPage StyledPage UpdatesDialog)
     set(WAM_QML_SOURCES)
     foreach(f ${WAM_QML_FILES})

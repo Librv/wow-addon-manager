@@ -31,6 +31,9 @@ StyledPage {
             required property string author
             required property string summary
             required property string logoUrl
+            required property string downloadsText
+            required property string updatedText
+            required property string versionText
             width: ListView.view.width
             height: col.implicitHeight
 
@@ -61,6 +64,11 @@ StyledPage {
                                 elide: Text.ElideRight
                                 opacity: 0.8
                                 Layout.fillWidth: true
+                            }
+                            AddonMeta {
+                                downloads: row.downloadsText
+                                date: row.updatedText
+                                version: row.versionText
                             }
                         }
                         QQC2.Button {

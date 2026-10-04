@@ -45,12 +45,14 @@ Item {
                     spacing: Kirigami.Units.smallSpacing
                     QQC2.Label { text: root.model.displayName; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                     AuthorLine { author: root.model.author }
-                    QQC2.Label {
+                    AddonMeta {
                         Layout.topMargin: Kirigami.Units.largeSpacing
-                        text: root.model.description
-                        opacity: 0.7
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
+                        downloads: root.model.downloadsText
+                        date: root.model.releasedText
+                        version: root.model.shortVersionText
+                        // An addon not linked to a file yet has no version or date to show.
+                        flavor: root.model.linked ? root.model.flavorName
+                              : [qsTr("Adopted"), root.model.flavorName].filter(s => s.length > 0).join(" \u00b7 ")
                     }
                 }
 
