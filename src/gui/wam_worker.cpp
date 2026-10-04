@@ -237,6 +237,7 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
         rec.displayName = mod.name;
         recordFile(rec, file);
         rec.modSlug = mod.slug;
+        rec.author = mod.author;
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
@@ -289,6 +290,7 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
                 rec.displayName = mod.name;
                 recordFile(rec, file);
                 rec.modSlug = mod.slug;
+                if (!mod.author.empty()) rec.author = mod.author;
                 if (!mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
             } catch (const std::exception&) {}
         }
@@ -410,6 +412,7 @@ void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
         InstalledAddon rec = *existing; // keeps flavorTypeId/flavorName
         recordFile(rec, file);
         rec.modSlug = mod.slug;
+        if (!mod.author.empty()) rec.author = mod.author;
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
@@ -501,6 +504,7 @@ void WamWorker::scan() {
             if (it != known.end()) {
                 sg.name = QString::fromStdString(it->second.name);
                 sg.iconUrl = QString::fromStdString(it->second.logoUrl);
+                sg.author = QString::fromStdString(it->second.author);
             } else {
                 sg.name = QString("Mod %1").arg(g.first);
             }
@@ -524,12 +528,13 @@ void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSibl
         for (const auto& f : folders) list.push_back(f.toStdString());
 
         std::string name = "mod " + std::to_string(modId);
-        std::string icon;
+        std::string icon, author;
         if (client_) {
             try {
                 auto mod = client_->getMod(modId);
                 name = mod.name;
                 icon = mod.logoUrl;
+                author = mod.author;
             } catch (const std::exception&) {} // adoption itself works offline
 
             if (includeSiblings) {
@@ -546,6 +551,10 @@ void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSibl
         }
 
         auto rec = Reconciler::adopt(state_, dir, modId, name, icon, list);
+        if (rec.author.empty() && !author.empty()) {
+            rec.author = author;
+            state_.upsert(rec);
+        }
         state_.save();
         emit adopted(modId, QString::fromStdString(rec.displayName), static_cast<int>(list.size()));
         emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
@@ -559,10 +568,10 @@ void WamWorker::backfillDetails() {
     if (!client_) return;
     bool changed = false;
 
-    // Icons and page slugs, from the mods: one batched request per 50.
+    // Icons, page slugs and authors, from the mods: one batched request per 50.
     std::vector<int64_t> modIds;
     for (const auto& a : state_.all())
-        if (a.modId != 0 && (a.iconUrl.empty() || (a.fileId != 0 && a.modSlug.empty()))) modIds.push_back(a.modId);
+        if (a.modId != 0 && (a.iconUrl.empty() || a.author.empty() || (a.fileId != 0 && a.modSlug.empty()))) modIds.push_back(a.modId);
     try {
         for (size_t i = 0; i < modIds.size(); i += 50) {
             std::vector<int64_t> chunk(modIds.begin() + i, modIds.begin() + std::min(modIds.size(), i + 50));
@@ -572,7 +581,9 @@ void WamWorker::backfillDetails() {
                 InstalledAddon rec = *existing;
                 if (rec.iconUrl.empty() && !mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
                 if (rec.modSlug.empty()) rec.modSlug = mod.slug;
-                if (rec.iconUrl != existing->iconUrl || rec.modSlug != existing->modSlug) {
+                if (rec.author.empty()) rec.author = mod.author;
+                if (rec.iconUrl != existing->iconUrl || rec.modSlug != existing->modSlug ||
+                    rec.author != existing->author) {
                     state_.upsert(rec);
                     changed = true;
                 }
@@ -624,6 +635,7 @@ void WamWorker::linkFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
         rec.displayName = mod.name;
         recordFile(rec, file);
         rec.modSlug = mod.slug;
+        if (!mod.author.empty()) rec.author = mod.author;
         if (!mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
         // The flavor comes from the flavor the file was picked under; CurseForge
         // only lists the file there if it is built for that flavor.

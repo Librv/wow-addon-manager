@@ -296,6 +296,7 @@ void testStateStoreRoundtrip(const fs::path& workDir) {
     a.flavorTypeId = 517;
     a.flavorName = "Retail";
     a.iconUrl = "https://media.forgecdn.net/a/thumb.png";
+    a.author = "Ellesmere";
 
     auto store = StateStore::load();
     store.upsert(a);
@@ -311,6 +312,7 @@ void testStateStoreRoundtrip(const fs::path& workDir) {
         check(found->manuallyProvided == true, "persisted manuallyProvided flag round-trips");
         check(found->flavorTypeId == 517 && found->flavorName == "Retail", "persisted flavor round-trips");
         check(found->iconUrl == "https://media.forgecdn.net/a/thumb.png", "persisted iconUrl round-trips");
+        check(found->author == "Ellesmere", "persisted author round-trips");
     }
 
     bool removed = reloaded.remove(12345);
@@ -330,8 +332,8 @@ void testStateStoreLegacyFile(const fs::path& workDir) {
     auto store = StateStore::load();
     auto found = store.find(7);
     check(found.has_value() && found->flavorTypeId == 0 && found->flavorName.empty() && found->iconUrl.empty() &&
-          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && !found->adopted,
-          "a state file with no flavor/icon/detail fields loads as unknown");
+          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && found->author.empty() && !found->adopted,
+          "a state file with no flavor/icon/detail/author fields loads as unknown");
     setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
 }
 
@@ -340,6 +342,7 @@ void testParseModResponses() {
     // latestFilesIndexes carry a per-file gameVersionTypeId (the flavor).
     const std::string list = R"({"data":[
       {"id":1,"name":"Alpha","slug":"alpha","summary":"s",
+       "authors":[{"id":1,"name":"Ellesmere","url":"u"},{"id":2,"name":"Helper","url":"u2"},{"id":3,"url":"nameless"}],
        "logo":{"id":9,"modId":1,"title":"t","thumbnailUrl":"https://media.forgecdn.net/a/thumb.png","url":"https://media.forgecdn.net/a/full.png"},
        "latestFilesIndexes":[{"gameVersion":"11.0.7","fileId":5,"gameVersionTypeId":517},
                              {"gameVersion":"11.0.5","fileId":4,"gameVersionTypeId":517},
@@ -353,6 +356,8 @@ void testParseModResponses() {
     check(mods[0].logoUrl == "https://media.forgecdn.net/a/thumb.png", "logoUrl prefers the thumbnail");
     check(mods[0].gameVersionTypeIds == std::vector<int64_t>({517, 67408}),
           "gameVersionTypeIds are collected from latestFilesIndexes without duplicates");
+    check(mods[0].author == "Ellesmere, Helper", "author joins every named author and skips one with no name");
+    check(mods[1].author.empty() && mods[2].author.empty(), "a mod with no authors array has an empty author");
     check(mods[1].logoUrl == "https://media.forgecdn.net/b/full.png", "logoUrl falls back to the full logo url");
     check(mods[2].logoUrl.empty() && mods[2].gameVersionTypeIds.empty(),
           "a mod with a null logo and no file indexes parses with empty icon/flavors");

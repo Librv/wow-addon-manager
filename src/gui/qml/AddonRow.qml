@@ -41,7 +41,14 @@ Item {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
                     QQC2.Label { text: root.model.displayName; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                    QQC2.Label { text: root.model.description; opacity: 0.7; elide: Text.ElideRight; Layout.fillWidth: true }
+                    AuthorLine { author: root.model.author }
+                    QQC2.Label {
+                        Layout.topMargin: Kirigami.Units.largeSpacing
+                        text: root.model.description
+                        opacity: 0.7
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
                 }
 
                 QQC2.ToolButton {

@@ -15,7 +15,7 @@ public:
         // Display texts and state for the expandable row
         DescriptionRole, VersionTextRole, ChannelTextRole, ReleasedTextRole, InstalledTextRole,
         SourceTextRole, LinkedRole, ModSlugRole, FileIdRole, ChangelogStateRole, ChangelogTextRole,
-        ZipNameTextRole
+        ZipNameTextRole, AuthorRole
     };
 
     using QAbstractListModel::QAbstractListModel;

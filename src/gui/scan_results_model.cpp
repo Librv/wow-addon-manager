@@ -16,6 +16,7 @@ QVariant ScanResultsModel::data(const QModelIndex& index, int role) const {
         case FoldersRole: return g.folders;
         case DetailsRole: return g.details;
         case MatchedRole: return g.modId != 0;
+        case AuthorRole:  return g.author;
         default: return {};
     }
 }
@@ -23,7 +24,7 @@ QVariant ScanResultsModel::data(const QModelIndex& index, int role) const {
 QHash<int, QByteArray> ScanResultsModel::roleNames() const {
     return {
         {ModIdRole, "modId"}, {NameRole, "name"}, {IconUrlRole, "iconUrl"},
-        {FoldersRole, "folders"}, {DetailsRole, "details"}, {MatchedRole, "matched"},
+        {FoldersRole, "folders"}, {DetailsRole, "details"}, {MatchedRole, "matched"}, {AuthorRole, "author"},
     };
 }
 

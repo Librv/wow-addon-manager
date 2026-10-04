@@ -56,6 +56,7 @@ Kirigami.Dialog {
             required property var modId
             required property string name
             required property string iconUrl
+            required property string author
             required property var folders
             required property var details
             required property bool matched
@@ -68,9 +69,11 @@ Kirigami.Dialog {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 0
+                    spacing: Kirigami.Units.smallSpacing
                     QQC2.Label { text: row.name; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                    AuthorLine { author: row.author }
                     QQC2.Label {
+                        Layout.topMargin: Kirigami.Units.largeSpacing
                         text: row.details.join("\n")
                         opacity: 0.7
                         wrapMode: Text.WrapAnywhere

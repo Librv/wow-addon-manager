@@ -16,6 +16,7 @@ QVariant SearchResultsModel::data(const QModelIndex& index, int role) const {
         case SummaryRole:    return QString::fromStdString(m.summary);
         case WebsiteUrlRole: return QString::fromStdString(m.websiteUrl);
         case LogoUrlRole:    return QString::fromStdString(m.logoUrl);
+        case AuthorRole:     return QString::fromStdString(m.author);
         default: return {};
     }
 }
@@ -23,7 +24,7 @@ QVariant SearchResultsModel::data(const QModelIndex& index, int role) const {
 QHash<int, QByteArray> SearchResultsModel::roleNames() const {
     return {
         {ModIdRole, "modId"}, {NameRole, "name"}, {SlugRole, "slug"},
-        {SummaryRole, "summary"}, {WebsiteUrlRole, "websiteUrl"}, {LogoUrlRole, "logoUrl"},
+        {SummaryRole, "summary"}, {WebsiteUrlRole, "websiteUrl"}, {LogoUrlRole, "logoUrl"}, {AuthorRole, "author"},
     };
 }
 

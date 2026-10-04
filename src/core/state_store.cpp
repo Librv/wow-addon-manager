@@ -32,6 +32,7 @@ json toJson(const InstalledAddon& a) {
         {"fileDisplayName", a.fileDisplayName},
         {"fileDate", a.fileDate},
         {"modSlug", a.modSlug},
+        {"author", a.author},
         {"adopted", a.adopted},
     };
 }
@@ -56,6 +57,7 @@ InstalledAddon fromJson(const json& j) {
     a.fileDisplayName = j.value("fileDisplayName", "");
     a.fileDate = j.value("fileDate", "");
     a.modSlug = j.value("modSlug", "");
+    a.author = j.value("author", "");
     a.adopted = j.value("adopted", false);
     return a;
 }

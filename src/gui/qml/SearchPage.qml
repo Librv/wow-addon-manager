@@ -28,6 +28,7 @@ StyledPage {
             id: row
             required property var modId
             required property string name
+            required property string author
             required property string summary
             required property string logoUrl
             width: ListView.view.width
@@ -39,7 +40,9 @@ StyledPage {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
                 QQC2.Label { text: row.name; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                AuthorLine { author: row.author }
                 QQC2.Label {
+                    Layout.topMargin: Kirigami.Units.largeSpacing
                     text: row.summary
                     wrapMode: Text.WordWrap
                     maximumLineCount: 3
