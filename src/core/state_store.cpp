@@ -34,7 +34,6 @@ json toJson(const InstalledAddon& a) {
         {"modSlug", a.modSlug},
         {"author", a.author},
         {"adopted", a.adopted},
-        {"downloadCount", a.downloadCount},
     };
 }
 
@@ -60,7 +59,6 @@ InstalledAddon fromJson(const json& j) {
     a.modSlug = j.value("modSlug", "");
     a.author = j.value("author", "");
     a.adopted = j.value("adopted", false);
-    a.downloadCount = j.value("downloadCount", int64_t{0});
     return a;
 }
 

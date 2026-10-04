@@ -269,7 +269,6 @@ int cmdInstall(int argc, char** argv) {
     recordFile(rec, *chosen);
     rec.modSlug = mod.slug;
     rec.author = mod.author;
-    rec.downloadCount = mod.downloadCount;
     rec.folders = folders;
     rec.installedAt = nowIso8601();
     rec.manuallyProvided = false;
@@ -438,7 +437,6 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         recordFile(rec, *chosen);
         rec.modSlug = mod.slug;
         if (!mod.author.empty()) rec.author = mod.author;
-        if (mod.downloadCount > 0) rec.downloadCount = mod.downloadCount;
         rec.adopted = false; // wam downloaded and installed these files now
         rec.folders = folders;
         rec.installedAt = nowIso8601();

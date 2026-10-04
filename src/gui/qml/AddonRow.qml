@@ -47,7 +47,6 @@ Item {
                     AuthorLine { author: root.model.author }
                     AddonMeta {
                         Layout.topMargin: Kirigami.Units.largeSpacing
-                        downloads: root.model.downloadsText
                         date: root.model.releasedText
                         version: root.model.shortVersionText
                         // An addon not linked to a file yet has no version or date to show.
