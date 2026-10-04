@@ -66,6 +66,7 @@ StyledPage {
                                 Layout.fillWidth: true
                             }
                             AddonMeta {
+                                Layout.topMargin: Kirigami.Units.largeSpacing
                                 downloads: row.downloadsText
                                 date: row.updatedText
                                 version: row.versionText
