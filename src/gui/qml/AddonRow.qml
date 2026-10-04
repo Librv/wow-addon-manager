@@ -30,12 +30,15 @@ Item {
 
         QQC2.ItemDelegate {
             Layout.fillWidth: true
+            // The same space above the title as below the description.
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing
             onClicked: root.toggleRequested()
 
             contentItem: RowLayout {
                 spacing: Kirigami.Units.largeSpacing
 
-                AddonIcon { source: root.model.iconUrl; size: Kirigami.Units.iconSizes.large }
+                AddonIcon { source: root.model.iconUrl; size: Kirigami.Units.iconSizes.large; Layout.alignment: Qt.AlignTop }
 
                 ColumnLayout {
                     Layout.fillWidth: true
