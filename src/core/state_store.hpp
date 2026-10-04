@@ -29,6 +29,7 @@ struct InstalledAddon {
     std::string fileDisplayName;      // CurseForge's name for the installed file, e.g. "v9.3.2"; empty until known
     std::string fileDate;             // when that file was uploaded (ISO-8601); empty until known
     std::string modSlug;              // CurseForge page slug; empty until known (adopted addons have none)
+    std::string author;               // CurseForge author name(s); empty until known (backfilled by the GUI)
     bool adopted = false;             // recorded from an existing folder rather than installed by wam
 };
 

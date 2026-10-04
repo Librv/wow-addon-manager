@@ -268,6 +268,7 @@ int cmdInstall(int argc, char** argv) {
     rec.displayName = mod.name;
     recordFile(rec, *chosen);
     rec.modSlug = mod.slug;
+    rec.author = mod.author;
     rec.folders = folders;
     rec.installedAt = nowIso8601();
     rec.manuallyProvided = false;
@@ -435,6 +436,7 @@ int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
         InstalledAddon rec = *existing;
         recordFile(rec, *chosen);
         rec.modSlug = mod.slug;
+        if (!mod.author.empty()) rec.author = mod.author;
         rec.adopted = false; // wam downloaded and installed these files now
         rec.folders = folders;
         rec.installedAt = nowIso8601();

@@ -15,6 +15,7 @@ struct ScanGroup {
     qint64 modId = 0;
     QString name;        // CurseForge mod name if known, else the .toc title / folder name
     QString iconUrl;     // CurseForge logo thumbnail if known
+    QString author;      // CurseForge author name(s) if known
     QStringList folders; // top-level AddOns folders in this row
     QStringList details; // one display line per folder, e.g. "DBM-Core (Deadly Boss Mods) v10.2.5"
 };
@@ -31,7 +32,7 @@ class ScanResultsModel : public QAbstractListModel {
     Q_PROPERTY(int folderCount READ folderCount NOTIFY changed)   // untracked folders across all rows
     Q_PROPERTY(int matchedCount READ matchedCount NOTIFY changed) // rows a .toc tag already identified
 public:
-    enum Role { ModIdRole = Qt::UserRole + 1, NameRole, IconUrlRole, FoldersRole, DetailsRole, MatchedRole };
+    enum Role { ModIdRole = Qt::UserRole + 1, NameRole, IconUrlRole, FoldersRole, DetailsRole, MatchedRole, AuthorRole };
     using QAbstractListModel::QAbstractListModel;
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;

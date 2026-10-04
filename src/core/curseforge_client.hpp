@@ -21,6 +21,8 @@ struct CurseForgeMod {
     std::vector<int64_t> gameVersionTypeIds;
     // Addon icon: the mod's logo thumbnail URL (empty if it has none).
     std::string logoUrl;
+    // The mod's author names from `authors`, joined with ", " (empty if none).
+    std::string author;
 };
 
 struct CurseForgeFile {

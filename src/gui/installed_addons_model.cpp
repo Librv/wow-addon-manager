@@ -57,6 +57,7 @@ QVariant InstalledAddonsModel::data(const QModelIndex& index, int role) const {
         case FlavorNameRole:       return flavorNameFor(a);
         case FlavorTypeIdRole:     return static_cast<qint64>(a.flavorTypeId);
         case IconUrlRole:          return QString::fromStdString(a.iconUrl);
+        case AuthorRole:           return QString::fromStdString(a.author);
         case DescriptionRole:      return describe(a);
         case VersionTextRole:      return a.fileId == 0 ? QStringLiteral("Unknown until its first update") : versionOf(a);
         case ChannelTextRole:      return capitalized(channelName(a.channel));
@@ -89,7 +90,7 @@ QHash<int, QByteArray> InstalledAddonsModel::roleNames() const {
         {ReleasedTextRole, "releasedText"}, {InstalledTextRole, "installedText"}, {SourceTextRole, "sourceText"},
         {LinkedRole, "linked"}, {ModSlugRole, "modSlug"}, {FileIdRole, "fileId"},
         {ChangelogStateRole, "changelogState"}, {ChangelogTextRole, "changelogText"},
-        {ZipNameTextRole, "zipNameText"},
+        {ZipNameTextRole, "zipNameText"}, {AuthorRole, "author"},
     };
 }
 

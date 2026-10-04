@@ -92,7 +92,7 @@ void testPendingUpdatesModel() {
 
 void testScanResultsModel() {
     ScanResultsModel m;
-    ScanGroup tagged; tagged.modId = 3358; tagged.name = "Deadly Boss Mods"; tagged.iconUrl = "http://i";
+    ScanGroup tagged; tagged.modId = 3358; tagged.name = "Deadly Boss Mods"; tagged.iconUrl = "http://i"; tagged.author = "Someone";
     tagged.folders = {"DBM-Core", "DBM-GUI"}; tagged.details = {"DBM-Core v1", "DBM-GUI"};
     ScanGroup loose; loose.name = "My Hand-Made Addon"; loose.folders = {"MyAddon"}; loose.details = {"MyAddon"};
     m.setGroups({tagged, loose});
@@ -106,6 +106,8 @@ void testScanResultsModel() {
     check(m.data(m.index(0), ScanResultsModel::FoldersRole).toStringList() == QStringList({"DBM-Core", "DBM-GUI"}),
           "folders role carries every folder in the row");
     check(m.data(m.index(0), ScanResultsModel::IconUrlRole).toString() == "http://i", "icon role");
+    check(m.data(m.index(0), ScanResultsModel::AuthorRole).toString() == "Someone" &&
+          m.data(m.index(1), ScanResultsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
     check(m.groups().size() == 2, "groups() returns a copy for bulk adoption");
 }
 
@@ -281,13 +283,15 @@ void testInstalledRowTexts() {
 
 void testSearchResultsModel() {
     SearchResultsModel m;
-    CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo";
+    CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo"; a.author = "Ellesmere";
     CurseForgeMod b; b.id = 20; b.name = "Beta";
     m.setResults({a, b});
 
     check(m.rowCount() == 2, "search results model holds the results");
     check(m.data(m.index(0), SearchResultsModel::NameRole).toString() == "Alpha", "name role");
     check(m.data(m.index(0), SearchResultsModel::LogoUrlRole).toString() == "http://logo", "logoUrl role");
+    check(m.data(m.index(0), SearchResultsModel::AuthorRole).toString() == "Ellesmere" &&
+          m.data(m.index(1), SearchResultsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
     check(m.flavorIdsFor(10) == QList<qint64>({517, 67408}), "flavorIdsFor returns the mod's flavors");
     check(m.flavorIdsFor(20).isEmpty(), "flavorIdsFor is empty for a mod that reports none");
     check(m.flavorIdsFor(999).isEmpty(), "flavorIdsFor is empty for an unknown mod");
@@ -296,7 +300,7 @@ void testSearchResultsModel() {
 void testInstalledAddonsModel() {
     InstalledAddonsModel m;
     InstalledAddon a;
-    a.modId = 5; a.displayName = "Foo"; a.flavorTypeId = 517; a.flavorName = "Retail"; a.iconUrl = "http://icon";
+    a.modId = 5; a.displayName = "Foo"; a.flavorTypeId = 517; a.flavorName = "Retail"; a.iconUrl = "http://icon"; a.author = "Ellesmere";
     a.folders = {"Foo", "FooOptions"};
     InstalledAddon legacy;
     legacy.modId = 6; legacy.displayName = "Bar"; // flavor unknown
@@ -306,6 +310,8 @@ void testInstalledAddonsModel() {
     check(m.data(m.index(0), InstalledAddonsModel::FlavorNameRole).toString() == "Retail", "flavorName role");
     check(m.data(m.index(0), InstalledAddonsModel::FlavorTypeIdRole).toLongLong() == 517, "flavorTypeId role");
     check(m.data(m.index(0), InstalledAddonsModel::IconUrlRole).toString() == "http://icon", "iconUrl role");
+    check(m.data(m.index(0), InstalledAddonsModel::AuthorRole).toString() == "Ellesmere" &&
+          m.data(m.index(1), InstalledAddonsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
     check(m.data(m.index(1), InstalledAddonsModel::FlavorTypeIdRole).toLongLong() == 0,
           "an addon with no recorded flavor reports flavorTypeId 0");
     check(m.data(m.index(0), InstalledAddonsModel::FoldersRole).toStringList().size() == 2, "folders role");

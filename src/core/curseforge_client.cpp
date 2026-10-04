@@ -99,6 +99,15 @@ CurseForgeMod parseMod(const json& m) {
         if (mod.logoUrl.empty()) mod.logoUrl = stringOrEmpty(m.at("logo"), "url");
     }
 
+    if (m.contains("authors") && m.at("authors").is_array()) {
+        for (const auto& a : m.at("authors")) {
+            const std::string name = stringOrEmpty(a, "name");
+            if (name.empty()) continue;
+            if (!mod.author.empty()) mod.author += ", ";
+            mod.author += name;
+        }
+    }
+
     if (m.contains("latestFilesIndexes") && m.at("latestFilesIndexes").is_array()) {
         for (const auto& idx : m.at("latestFilesIndexes")) {
             if (!idx.contains("gameVersionTypeId") || idx.at("gameVersionTypeId").is_null()) continue;

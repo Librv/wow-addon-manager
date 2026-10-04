@@ -112,7 +112,8 @@ your search text or results.
 
 - **AddOns** (page title "Installed AddOns"): everything wam tracks, one row
   per addon, each as big as a Search result: its CurseForge icon, its name,
-  and under it a line of details such as `v9.3.2 · Release · Retail · Sep 29,
+  "By Author" under it (filled in at startup with an API key for addons
+  recorded before authors were stored), and below that a line of details such as `v9.3.2 · Release · Retail · Sep 29,
   2026` (an adopted addon with no file yet reads `Adopted from your AddOns
   folder · Release · flavor not set`). On each row:
   - a **refresh button** checks that one addon for updates (the result is a
@@ -145,7 +146,7 @@ your search text or results.
   - **Review updates (N)** appears while updates are queued, to reopen the
     popup if you closed it early.
   - **Scan for existing addons** opens the scan window (below).
-- **Search**: search CurseForge; each result has an **Install** button that
+- **Search**: search CurseForge; each result shows its name, author and summary, and has an **Install** button that
   opens the install window (below).
 - **Settings**: CurseForge API key, WoW folder, and under it the **flavor** of
   that folder, each with its explanation directly beneath it. The flavor is
@@ -213,6 +214,7 @@ touches one file:
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
 | `AppColors.qml` | the colour palette (page background, inset field colour, border); change colours here |
 | `StyledPage.qml` | base of every page, gives them the shared background |
+| `AuthorLine.qml` | the "By Author" line under an addon's title (hidden while the author is unknown) |
 | `FolderChip.qml`, `AddonIcon.qml`, `FieldNote.qml` | small shared pieces |
 | `SearchPage.qml`, `SettingsPage.qml`, `InstallDialog.qml`, `UpdatesDialog.qml`, `ScanDialog.qml` | the other pages and popups |
 
