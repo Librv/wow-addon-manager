@@ -114,12 +114,11 @@ your search text or results.
   per addon, each as big as a Search result: its CurseForge icon, its name,
   "By Author" under it (filled in at startup with an API key for addons
   recorded before authors were stored), and below that a line of facts in the
-  same order as on the Search tab: download count (download icon), release
-  date of the installed file (clock icon), its version (puzzle-piece icon) and
-  the flavor (no icon), for example `1.2M · Sep 29, 2026 · v9.3.2 · Retail`.
-  An adopted addon with no file yet has no date or version and reads
-  `Adopted · flavor`. Download counts are refreshed from CurseForge at startup
-  (with an API key). On each row:
+  same order as on the Search tab, minus the download count: release date of
+  the installed file (clock icon), its version (puzzle-piece icon) and the
+  flavor (no icon), for example `Sep 29, 2026 · v9.3.2 · Retail`. An adopted
+  addon with no file yet has no date or version and reads `Adopted · flavor`.
+  On each row:
   - a **refresh button** checks that one addon for updates (the result is a
     notification, or the update popup if one is found);
   - an **arrow** opens the details. Any number of rows can be open at once, and
@@ -221,7 +220,7 @@ touches one file:
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
 | `AppColors.qml` | the colour palette (page background, inset field colour, border); change colours here |
 | `StyledPage.qml` | base of every page, gives them the shared background |
-| `AddonMeta.qml` | the facts line under a description (downloads, date, version, flavor), shared by Search and AddOns |
+| `AddonMeta.qml` | the facts line under a description (downloads, date, version, flavor; empty ones are left out), shared by Search and AddOns |
 | `AuthorLine.qml` | the "By Author" line under an addon's title (hidden while the author is unknown) |
 | `FolderChip.qml`, `AddonIcon.qml`, `FieldNote.qml` | small shared pieces |
 | `SearchPage.qml`, `SettingsPage.qml`, `InstallDialog.qml`, `UpdatesDialog.qml`, `ScanDialog.qml` | the other pages and popups |

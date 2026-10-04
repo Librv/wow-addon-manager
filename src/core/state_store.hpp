@@ -31,7 +31,6 @@ struct InstalledAddon {
     std::string modSlug;              // CurseForge page slug; empty until known (adopted addons have none)
     std::string author;               // CurseForge author name(s); empty until known (backfilled by the GUI)
     bool adopted = false;             // recorded from an existing folder rather than installed by wam
-    int64_t downloadCount = 0;        // CurseForge's total downloads for the mod; 0 until known (refreshed at startup)
 };
 
 // Records which CurseForge file an addon is now at: id, names, upload date,

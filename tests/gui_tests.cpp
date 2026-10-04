@@ -261,10 +261,6 @@ void testInstalledRowTexts() {
     check(role(3, InstalledAddonsModel::SourceTextRole) == "Adopted, linked to CurseForge", "an adopted addon that was linked says so");
     check(role(4, InstalledAddonsModel::SourceTextRole) == "Manual file", "a manually installed addon says so");
 
-    linked.downloadCount = 2500000;
-    m.setAddons({adopted, linked, bare, both, manual});
-    check(role(1, InstalledAddonsModel::DownloadsTextRole) == "2.5M" && role(0, InstalledAddonsModel::DownloadsTextRole).isEmpty(),
-          "the downloads text is compact, and empty while the count is unknown");
     check(role(1, InstalledAddonsModel::ShortVersionTextRole) == "v9.3.2" && role(0, InstalledAddonsModel::ShortVersionTextRole).isEmpty() &&
           role(2, InstalledAddonsModel::ShortVersionTextRole) == "Bare-1.zip",
           "the short version is the file's name, and empty for an adopted addon that is not linked");

@@ -297,7 +297,6 @@ void testStateStoreRoundtrip(const fs::path& workDir) {
     a.flavorName = "Retail";
     a.iconUrl = "https://media.forgecdn.net/a/thumb.png";
     a.author = "Ellesmere";
-    a.downloadCount = 987654321;
 
     auto store = StateStore::load();
     store.upsert(a);
@@ -314,7 +313,6 @@ void testStateStoreRoundtrip(const fs::path& workDir) {
         check(found->flavorTypeId == 517 && found->flavorName == "Retail", "persisted flavor round-trips");
         check(found->iconUrl == "https://media.forgecdn.net/a/thumb.png", "persisted iconUrl round-trips");
         check(found->author == "Ellesmere", "persisted author round-trips");
-        check(found->downloadCount == 987654321, "persisted downloadCount round-trips");
     }
 
     bool removed = reloaded.remove(12345);
@@ -334,7 +332,7 @@ void testStateStoreLegacyFile(const fs::path& workDir) {
     auto store = StateStore::load();
     auto found = store.find(7);
     check(found.has_value() && found->flavorTypeId == 0 && found->flavorName.empty() && found->iconUrl.empty() &&
-          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && found->author.empty() && !found->adopted && found->downloadCount == 0,
+          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && found->author.empty() && !found->adopted,
           "a state file with no flavor/icon/detail/author fields loads as unknown");
     setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
 }
