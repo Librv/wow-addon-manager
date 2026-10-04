@@ -10,6 +10,7 @@
 #include "gui/toc_text.hpp"
 #include "gui/install_files_model.hpp"
 #include "gui/flavors_model.hpp"
+#include "gui/format.hpp"
 #include "core/flavor_cache.hpp"
 
 #include <QCoreApplication>
@@ -260,6 +261,14 @@ void testInstalledRowTexts() {
     check(role(3, InstalledAddonsModel::SourceTextRole) == "Adopted, linked to CurseForge", "an adopted addon that was linked says so");
     check(role(4, InstalledAddonsModel::SourceTextRole) == "Manual file", "a manually installed addon says so");
 
+    linked.downloadCount = 2500000;
+    m.setAddons({adopted, linked, bare, both, manual});
+    check(role(1, InstalledAddonsModel::DownloadsTextRole) == "2.5M" && role(0, InstalledAddonsModel::DownloadsTextRole).isEmpty(),
+          "the downloads text is compact, and empty while the count is unknown");
+    check(role(1, InstalledAddonsModel::ShortVersionTextRole) == "v9.3.2" && role(0, InstalledAddonsModel::ShortVersionTextRole).isEmpty() &&
+          role(2, InstalledAddonsModel::ShortVersionTextRole) == "Bare-1.zip",
+          "the short version is the file's name, and empty for an adopted addon that is not linked");
+
     check(role(1, InstalledAddonsModel::ZipNameTextRole) == "EllesmereUI-v9.3.2.zip",
           "a linked addon shows its zip name after the version");
     check(role(0, InstalledAddonsModel::ZipNameTextRole).isEmpty() && role(2, InstalledAddonsModel::ZipNameTextRole).isEmpty() &&
@@ -281,6 +290,16 @@ void testInstalledRowTexts() {
     check(role(0, InstalledAddonsModel::ChangelogStateRole) == "ready", "and the row shows it");
 }
 
+void testFormatCount() {
+    check(formatCount(0).isEmpty() && formatCount(-5).isEmpty(), "formatCount is empty for an unknown count");
+    check(formatCount(842) == "842" && formatCount(999) == "999", "small counts are written out");
+    check(formatCount(1000) == "1K" && formatCount(1500) == "1.5K" && formatCount(45300) == "45K" && formatCount(456000) == "456K",
+          "thousands get a K, one decimal below 10K, never a trailing .0");
+    check(formatCount(999999) == "1M" && formatCount(1234567) == "1.2M" && formatCount(12000000) == "12M",
+          "millions get an M, and a count that rounds up to 1000K becomes 1M");
+    check(formatCount(2500000000LL) == "2.5B", "billions get a B");
+}
+
 void testSearchResultsModel() {
     SearchResultsModel m;
     CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo"; a.author = "Ellesmere";
@@ -292,6 +311,17 @@ void testSearchResultsModel() {
     check(m.data(m.index(0), SearchResultsModel::LogoUrlRole).toString() == "http://logo", "logoUrl role");
     check(m.data(m.index(0), SearchResultsModel::AuthorRole).toString() == "Ellesmere" &&
           m.data(m.index(1), SearchResultsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
+    check(m.data(m.index(0), SearchResultsModel::DownloadsTextRole).toString().isEmpty() &&
+          m.data(m.index(0), SearchResultsModel::UpdatedTextRole).toString().isEmpty() &&
+          m.data(m.index(0), SearchResultsModel::VersionTextRole).toString().isEmpty(),
+          "download, date and version roles are empty when the mod gave none");
+    CurseForgeMod c; c.id = 30; c.name = "Gamma"; c.downloadCount = 1500; c.latestVersion = "v9.3.2"; c.latestDate = "2026-09-29T14:03:11.5Z";
+    m.setResults({c});
+    check(m.data(m.index(0), SearchResultsModel::DownloadsTextRole).toString() == "1.5K" &&
+          m.data(m.index(0), SearchResultsModel::UpdatedTextRole).toString() == "Sep 29, 2026" &&
+          m.data(m.index(0), SearchResultsModel::VersionTextRole).toString() == "v9.3.2",
+          "a search result shows its download count, latest update date and latest version");
+    m.setResults({a, b});
     check(m.flavorIdsFor(10) == QList<qint64>({517, 67408}), "flavorIdsFor returns the mod's flavors");
     check(m.flavorIdsFor(20).isEmpty(), "flavorIdsFor is empty for a mod that reports none");
     check(m.flavorIdsFor(999).isEmpty(), "flavorIdsFor is empty for an unknown mod");
@@ -466,6 +496,7 @@ int main(int argc, char** argv) {
     testFlavorsModel();
     testInstalledFlavorNames();
     testInstalledRowTexts();
+    testFormatCount();
     testSearchResultsModel();
     testInstalledAddonsModel();
     testControllerEndToEnd();

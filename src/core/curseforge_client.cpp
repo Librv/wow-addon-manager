@@ -108,6 +108,24 @@ CurseForgeMod parseMod(const json& m) {
         }
     }
 
+    if (m.contains("downloadCount") && m.at("downloadCount").is_number())
+        mod.downloadCount = static_cast<int64_t>(m.at("downloadCount").get<double>());
+
+    if (m.contains("latestFiles") && m.at("latestFiles").is_array()) {
+        int64_t bestId = -1;
+        for (const auto& f : m.at("latestFiles")) {
+            if (!f.is_object() || !f.contains("id") || !f.at("id").is_number_integer()) continue;
+            const auto id = f.at("id").get<int64_t>();
+            if (id <= bestId) continue;
+            bestId = id;
+            mod.latestVersion = stringOrEmpty(f, "displayName");
+            if (mod.latestVersion.empty()) mod.latestVersion = stringOrEmpty(f, "fileName");
+            mod.latestDate = stringOrEmpty(f, "fileDate");
+        }
+    }
+    if (mod.latestDate.empty()) mod.latestDate = stringOrEmpty(m, "dateReleased");
+    if (mod.latestDate.empty()) mod.latestDate = stringOrEmpty(m, "dateModified");
+
     if (m.contains("latestFilesIndexes") && m.at("latestFilesIndexes").is_array()) {
         for (const auto& idx : m.at("latestFilesIndexes")) {
             if (!idx.contains("gameVersionTypeId") || idx.at("gameVersionTypeId").is_null()) continue;

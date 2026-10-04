@@ -89,7 +89,8 @@ public slots:
     void adopt(qint64 modId, const QStringList& folders, bool includeSiblings, bool rescan);
 
     // Fills in what tracked addons are missing and CurseForge can tell us:
-    // icons and page slugs (from the mods) and version names and upload dates
+    // icons, page slugs and download counts (from the mods; the counts are
+    // refreshed every time) and version names and upload dates
     // (from the files), in batched requests. Silent and best-effort.
     void backfillDetails();
 

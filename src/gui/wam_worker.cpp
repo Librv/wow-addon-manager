@@ -238,6 +238,7 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
         recordFile(rec, file);
         rec.modSlug = mod.slug;
         rec.author = mod.author;
+        rec.downloadCount = mod.downloadCount;
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
@@ -291,6 +292,7 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
                 recordFile(rec, file);
                 rec.modSlug = mod.slug;
                 if (!mod.author.empty()) rec.author = mod.author;
+                if (mod.downloadCount > 0) rec.downloadCount = mod.downloadCount;
                 if (!mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
             } catch (const std::exception&) {}
         }
@@ -413,6 +415,7 @@ void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
         recordFile(rec, file);
         rec.modSlug = mod.slug;
         if (!mod.author.empty()) rec.author = mod.author;
+        if (mod.downloadCount > 0) rec.downloadCount = mod.downloadCount;
         rec.folders = folders;
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
@@ -529,12 +532,14 @@ void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSibl
 
         std::string name = "mod " + std::to_string(modId);
         std::string icon, author;
+        int64_t downloads = 0;
         if (client_) {
             try {
                 auto mod = client_->getMod(modId);
                 name = mod.name;
                 icon = mod.logoUrl;
                 author = mod.author;
+                downloads = mod.downloadCount;
             } catch (const std::exception&) {} // adoption itself works offline
 
             if (includeSiblings) {
@@ -551,8 +556,9 @@ void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSibl
         }
 
         auto rec = Reconciler::adopt(state_, dir, modId, name, icon, list);
-        if (rec.author.empty() && !author.empty()) {
-            rec.author = author;
+        if ((rec.author.empty() && !author.empty()) || (rec.downloadCount == 0 && downloads > 0)) {
+            if (rec.author.empty()) rec.author = author;
+            if (rec.downloadCount == 0) rec.downloadCount = downloads;
             state_.upsert(rec);
         }
         state_.save();
@@ -568,10 +574,11 @@ void WamWorker::backfillDetails() {
     if (!client_) return;
     bool changed = false;
 
-    // Icons, page slugs and authors, from the mods: one batched request per 50.
+    // Icons, page slugs, authors and download counts, from the mods: one batched
+    // request per 50. Download counts change, so every addon is asked each time.
     std::vector<int64_t> modIds;
     for (const auto& a : state_.all())
-        if (a.modId != 0 && (a.iconUrl.empty() || a.author.empty() || (a.fileId != 0 && a.modSlug.empty()))) modIds.push_back(a.modId);
+        if (a.modId != 0) modIds.push_back(a.modId);
     try {
         for (size_t i = 0; i < modIds.size(); i += 50) {
             std::vector<int64_t> chunk(modIds.begin() + i, modIds.begin() + std::min(modIds.size(), i + 50));
@@ -582,8 +589,9 @@ void WamWorker::backfillDetails() {
                 if (rec.iconUrl.empty() && !mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
                 if (rec.modSlug.empty()) rec.modSlug = mod.slug;
                 if (rec.author.empty()) rec.author = mod.author;
+                if (mod.downloadCount > 0) rec.downloadCount = mod.downloadCount;
                 if (rec.iconUrl != existing->iconUrl || rec.modSlug != existing->modSlug ||
-                    rec.author != existing->author) {
+                    rec.author != existing->author || rec.downloadCount != existing->downloadCount) {
                     state_.upsert(rec);
                     changed = true;
                 }
@@ -636,6 +644,7 @@ void WamWorker::linkFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
         recordFile(rec, file);
         rec.modSlug = mod.slug;
         if (!mod.author.empty()) rec.author = mod.author;
+        if (mod.downloadCount > 0) rec.downloadCount = mod.downloadCount;
         if (!mod.logoUrl.empty()) rec.iconUrl = mod.logoUrl;
         // The flavor comes from the flavor the file was picked under; CurseForge
         // only lists the file there if it is built for that flavor.

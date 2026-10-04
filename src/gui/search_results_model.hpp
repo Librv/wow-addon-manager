@@ -8,7 +8,8 @@ namespace wam::gui {
 class SearchResultsModel : public QAbstractListModel {
     Q_OBJECT
 public:
-    enum Role { ModIdRole = Qt::UserRole + 1, NameRole, SlugRole, SummaryRole, WebsiteUrlRole, LogoUrlRole, AuthorRole };
+    enum Role { ModIdRole = Qt::UserRole + 1, NameRole, SlugRole, SummaryRole, WebsiteUrlRole, LogoUrlRole, AuthorRole,
+                DownloadsTextRole, UpdatedTextRole, VersionTextRole };
 
     using QAbstractListModel::QAbstractListModel;
 

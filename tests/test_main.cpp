@@ -297,6 +297,7 @@ void testStateStoreRoundtrip(const fs::path& workDir) {
     a.flavorName = "Retail";
     a.iconUrl = "https://media.forgecdn.net/a/thumb.png";
     a.author = "Ellesmere";
+    a.downloadCount = 987654321;
 
     auto store = StateStore::load();
     store.upsert(a);
@@ -313,6 +314,7 @@ void testStateStoreRoundtrip(const fs::path& workDir) {
         check(found->flavorTypeId == 517 && found->flavorName == "Retail", "persisted flavor round-trips");
         check(found->iconUrl == "https://media.forgecdn.net/a/thumb.png", "persisted iconUrl round-trips");
         check(found->author == "Ellesmere", "persisted author round-trips");
+        check(found->downloadCount == 987654321, "persisted downloadCount round-trips");
     }
 
     bool removed = reloaded.remove(12345);
@@ -332,7 +334,7 @@ void testStateStoreLegacyFile(const fs::path& workDir) {
     auto store = StateStore::load();
     auto found = store.find(7);
     check(found.has_value() && found->flavorTypeId == 0 && found->flavorName.empty() && found->iconUrl.empty() &&
-          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && found->author.empty() && !found->adopted,
+          found->fileDisplayName.empty() && found->fileDate.empty() && found->modSlug.empty() && found->author.empty() && !found->adopted && found->downloadCount == 0,
           "a state file with no flavor/icon/detail/author fields loads as unknown");
     setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
 }
@@ -343,11 +345,16 @@ void testParseModResponses() {
     const std::string list = R"({"data":[
       {"id":1,"name":"Alpha","slug":"alpha","summary":"s",
        "authors":[{"id":1,"name":"Ellesmere","url":"u"},{"id":2,"name":"Helper","url":"u2"},{"id":3,"url":"nameless"}],
+       "downloadCount":1234567.0,
+       "latestFiles":[{"id":40,"displayName":"v1.0","fileName":"a-1.zip","fileDate":"2026-01-01T00:00:00Z"},
+                      {"id":90,"displayName":"v2.0","fileName":"a-2.zip","fileDate":"2026-09-29T14:03:11.5Z"},
+                      {"id":60,"displayName":"v1.5","fileName":"a-15.zip","fileDate":"2026-05-05T00:00:00Z"}],
        "logo":{"id":9,"modId":1,"title":"t","thumbnailUrl":"https://media.forgecdn.net/a/thumb.png","url":"https://media.forgecdn.net/a/full.png"},
        "latestFilesIndexes":[{"gameVersion":"11.0.7","fileId":5,"gameVersionTypeId":517},
                              {"gameVersion":"11.0.5","fileId":4,"gameVersionTypeId":517},
                              {"gameVersion":"1.15.5","fileId":3,"gameVersionTypeId":67408}]},
-      {"id":2,"name":"Beta","slug":"beta","summary":"",
+      {"id":2,"name":"Beta","slug":"beta","summary":"","dateReleased":"2025-03-04T05:06:07Z",
+       "latestFiles":[{"id":5,"fileName":"b-5.zip"}],
        "logo":{"url":"https://media.forgecdn.net/b/full.png","thumbnailUrl":null}},
       {"id":3,"name":"Gamma","slug":"gamma","summary":"","logo":null}
     ]})";
@@ -359,6 +366,12 @@ void testParseModResponses() {
     check(mods[0].author == "Ellesmere, Helper", "author joins every named author and skips one with no name");
     check(mods[1].author.empty() && mods[2].author.empty(), "a mod with no authors array has an empty author");
     check(mods[1].logoUrl == "https://media.forgecdn.net/b/full.png", "logoUrl falls back to the full logo url");
+    check(mods[0].downloadCount == 1234567, "downloadCount is read");
+    check(mods[0].latestVersion == "v2.0" && mods[0].latestDate == "2026-09-29T14:03:11.5Z",
+          "the latest version and date come from the newest of latestFiles (highest id)");
+    check(mods[1].latestVersion == "b-5.zip" && mods[1].latestDate == "2025-03-04T05:06:07Z" && mods[1].downloadCount == 0,
+          "a file with no display name falls back to its file name, a missing file date to dateReleased, a missing count to 0");
+    check(mods[2].latestVersion.empty() && mods[2].latestDate.empty(), "a mod with no latestFiles has no latest version or date");
     check(mods[2].logoUrl.empty() && mods[2].gameVersionTypeIds.empty(),
           "a mod with a null logo and no file indexes parses with empty icon/flavors");
 

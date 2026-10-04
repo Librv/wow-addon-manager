@@ -65,6 +65,8 @@ QVariant InstalledAddonsModel::data(const QModelIndex& index, int role) const {
         case InstalledTextRole:    return formatIsoDateTimeLocal(a.installedAt);
         case SourceTextRole:       return sourceOf(a);
         case ZipNameTextRole:      return zipNameOf(a);
+        case DownloadsTextRole:    return formatCount(a.downloadCount);
+        case ShortVersionTextRole: return a.fileId == 0 ? QString() : versionOf(a);
         case LinkedRole:           return a.fileId != 0;
         case ModSlugRole:          return QString::fromStdString(a.modSlug);
         case FileIdRole:           return static_cast<qint64>(a.fileId);
@@ -91,6 +93,7 @@ QHash<int, QByteArray> InstalledAddonsModel::roleNames() const {
         {LinkedRole, "linked"}, {ModSlugRole, "modSlug"}, {FileIdRole, "fileId"},
         {ChangelogStateRole, "changelogState"}, {ChangelogTextRole, "changelogText"},
         {ZipNameTextRole, "zipNameText"}, {AuthorRole, "author"},
+        {DownloadsTextRole, "downloadsText"}, {ShortVersionTextRole, "shortVersionText"},
     };
 }
 
