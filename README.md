@@ -468,6 +468,7 @@ src/cli/    the wam CLI
 src/gui/    Qt adapter layer (worker thread, controller, list models) and wam-gui
 src/gui/qml/ Kirigami views (pages, the update and scan popups, the icon component)
 data/       .desktop file
+tools/      ram-test.sh (idle RAM measurement, see docs/ram-testing.md)
 tests/      test_main.cpp (core), gui_tests.cpp (adapter layer)
 ```
 
