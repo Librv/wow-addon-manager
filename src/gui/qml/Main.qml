@@ -38,9 +38,12 @@ Kirigami.ApplicationWindow {
         const page = showPage("SearchPage.qml")
         if (query) page.runQuery(query)
     }
-    function openScan() { scanDialog.open() }
-    function openInstall(modId, name, iconUrl, preferredFlavorId) { installDialog.openFor(modId, name, iconUrl, preferredFlavorId || 0, false) }
-    function openLink(modId, name, iconUrl, preferredFlavorId) { installDialog.openFor(modId, name, iconUrl, preferredFlavorId || 0, true) }
+    function openScan() { dialogOf(scanLoader).open() }
+    // Dialogs are built on first use (see the Loaders below): most sessions never open
+    // most of them, and each one is a sizeable tree of Controls.
+    function dialogOf(loader) { loader.active = true; return loader.item }
+    function openInstall(modId, name, iconUrl, preferredFlavorId) { dialogOf(installLoader).openFor(modId, name, iconUrl, preferredFlavorId || 0, false) }
+    function openLink(modId, name, iconUrl, preferredFlavorId) { dialogOf(installLoader).openFor(modId, name, iconUrl, preferredFlavorId || 0, true) }
     function showSettings() { showPage("SettingsPage.qml") }
     function checkUpdates() {
         if (!wam.checkingUpdates) {
@@ -48,10 +51,10 @@ Kirigami.ApplicationWindow {
             showPassiveNotification(qsTr("Checking for updates…"))
         }
     }
-    function reviewUpdates() { updatesDialog.open() }
+    function reviewUpdates() { dialogOf(updatesLoader).open() }
     function pickZip(modId, fileId) {
         manualTarget = { modId: modId, fileId: fileId }
-        zipDialog.open()
+        dialogOf(zipLoader).open()
     }
 
     Component.onCompleted: showInstalled()
@@ -93,73 +96,90 @@ Kirigami.ApplicationWindow {
         function onErrorOccurred(context, message) { root.showPassiveNotification(context + ": " + message, "long") }
         function onInstallFinished(modId, name) { root.showPassiveNotification(qsTr("Installed %1").arg(name)) }
         function onAddonUpToDate(modId, name) { root.showPassiveNotification(qsTr("%1 is up to date").arg(name)) }
-        function onUpdateFound(modId) { updatesDialog.open() }
+        function onUpdateFound(modId) { root.reviewUpdates() }
         function onLinked(modId, name) { root.showPassiveNotification(qsTr("Linked %1 to CurseForge").arg(name)) }
         function onAdopted(modId, name, folderCount) {
             root.showPassiveNotification(qsTr("Adopted %1 (%2 folder(s))").arg(name).arg(folderCount))
         }
         function onDownloadBlocked(modId, modName, modSlug, fileId, fileName) {
-            blockedDialog.info = { modId: modId, modName: modName, modSlug: modSlug, fileId: fileId, fileName: fileName }
-            blockedDialog.open()
+            const d = root.dialogOf(blockedLoader)
+            d.info = { modId: modId, modName: modName, modSlug: modSlug, fileId: fileId, fileName: fileName }
+            d.open()
         }
         function onUpdateCheckFinished(available) {
-            if (available > 0) updatesDialog.open()
+            if (available > 0) root.reviewUpdates()
             else root.showPassiveNotification(qsTr("All addons are up to date"))
         }
     }
 
-    InstallDialog {
-        id: installDialog
-        onInstallStarted: (name) => root.showPassiveNotification(qsTr("Installing %1…").arg(name))
-        onSettingsRequested: root.showSettings()
+    Loader {
+        id: installLoader
+        active: false
+        sourceComponent: InstallDialog {
+            onInstallStarted: (name) => root.showPassiveNotification(qsTr("Installing %1…").arg(name))
+            onSettingsRequested: root.showSettings()
+        }
     }
 
-    ScanDialog {
-        id: scanDialog
-        onSearchRequested: (query) => root.showSearch(query)
-        onSettingsRequested: root.showSettings()
+    Loader {
+        id: scanLoader
+        active: false
+        sourceComponent: ScanDialog {
+            onSearchRequested: (query) => root.showSearch(query)
+            onSettingsRequested: root.showSettings()
+        }
     }
 
-    UpdatesDialog {
-        id: updatesDialog
-        onPickZipRequested: (modId, fileId) => root.pickZip(modId, fileId)
+    Loader {
+        id: updatesLoader
+        active: false
+        sourceComponent: UpdatesDialog {
+            onPickZipRequested: (modId, fileId) => root.pickZip(modId, fileId)
+        }
     }
 
-    FileDialog {
-        id: zipDialog
-        title: qsTr("Select the downloaded addon zip")
-        nameFilters: [qsTr("Zip archives (*.zip)")]
-        onAccepted: wam.installManual(root.manualTarget.modId, root.manualTarget.fileId, wam.localPath(selectedFile))
+    Loader {
+        id: zipLoader
+        active: false
+        sourceComponent: FileDialog {
+            title: qsTr("Select the downloaded addon zip")
+            nameFilters: [qsTr("Zip archives (*.zip)")]
+            onAccepted: wam.installManual(root.manualTarget.modId, root.manualTarget.fileId, wam.localPath(selectedFile))
+        }
     }
 
-    Kirigami.Dialog {
-        id: blockedDialog
-        property var info: ({})
-        title: qsTr("Download blocked by author")
-        preferredWidth: Kirigami.Units.gridUnit * 28
-        padding: Kirigami.Units.largeSpacing
-        standardButtons: Kirigami.Dialog.Close
+    Loader {
+        id: blockedLoader
+        active: false
+        sourceComponent: Kirigami.Dialog {
+            id: blockedDialog
+            property var info: ({})
+            title: qsTr("Download blocked by author")
+            preferredWidth: Kirigami.Units.gridUnit * 28
+            padding: Kirigami.Units.largeSpacing
+            standardButtons: Kirigami.Dialog.Close
 
-        ColumnLayout {
-            spacing: Kirigami.Units.largeSpacing
-            QQC2.Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: qsTr("The author of %1 does not allow third-party downloads. Download %2 from CurseForge yourself, then select the zip here.")
-                          .arg(blockedDialog.info.modName).arg(blockedDialog.info.fileName)
-            }
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
+            ColumnLayout {
                 spacing: Kirigami.Units.largeSpacing
-                // Starts the browser download of exactly this file.
-                QQC2.Button {
-                    text: qsTr("Open on CurseForge")
-                    enabled: !!blockedDialog.info.modId && !!blockedDialog.info.fileId
-                    onClicked: Qt.openUrlExternally(wam.downloadUrl(blockedDialog.info.modId, blockedDialog.info.fileId))
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("The author of %1 does not allow third-party downloads. Download %2 from CurseForge yourself, then select the zip here.")
+                              .arg(blockedDialog.info.modName).arg(blockedDialog.info.fileName)
                 }
-                QQC2.Button {
-                    text: qsTr("Choose downloaded zip…")
-                    onClicked: { blockedDialog.close(); root.pickZip(blockedDialog.info.modId, blockedDialog.info.fileId) }
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: Kirigami.Units.largeSpacing
+                    // Starts the browser download of exactly this file.
+                    QQC2.Button {
+                        text: qsTr("Open on CurseForge")
+                        enabled: !!blockedDialog.info.modId && !!blockedDialog.info.fileId
+                        onClicked: Qt.openUrlExternally(wam.downloadUrl(blockedDialog.info.modId, blockedDialog.info.fileId))
+                    }
+                    QQC2.Button {
+                        text: qsTr("Choose downloaded zip…")
+                        onClicked: { blockedDialog.close(); root.pickZip(blockedDialog.info.modId, blockedDialog.info.fileId) }
+                    }
                 }
             }
         }
