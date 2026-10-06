@@ -43,13 +43,22 @@ StyledPage {
         }
     ]
 
-    Kirigami.PromptDialog {
-        id: removeDialog
-        property var target: ({})
-        title: qsTr("Remove %1?").arg(target.displayName)
-        subtitle: qsTr("This deletes its folders from AddOns. SavedVariables under WTF are not touched.")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: wam.removeAddon(target.modId)
+    // Built the first time an addon is removed, not with the page.
+    property var removeDialog: null
+    Component {
+        id: removeDialogComponent
+        Kirigami.PromptDialog {
+            property var target: ({})
+            title: qsTr("Remove %1?").arg(target.displayName)
+            subtitle: qsTr("This deletes its folders from AddOns. SavedVariables under WTF are not touched.")
+            standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+            onAccepted: wam.removeAddon(target.modId)
+        }
+    }
+    function askRemove(modId, displayName) {
+        if (!removeDialog) removeDialog = removeDialogComponent.createObject(page)
+        removeDialog.target = { modId: modId, displayName: displayName }
+        removeDialog.open()
     }
 
     ListView {
@@ -63,7 +72,7 @@ StyledPage {
                 wam.checkUpdate(model.modId)
                 page.win.showPassiveNotification(qsTr("Checking %1…").arg(model.displayName))
             }
-            onRemoveRequested: { removeDialog.target = { modId: model.modId, displayName: model.displayName }; removeDialog.open() }
+            onRemoveRequested: page.askRemove(model.modId, model.displayName)
             onStopTrackingRequested: wam.untrackAddon(model.modId)
         }
 
