@@ -80,13 +80,15 @@ Item {
             }
         }
 
-        AddonDetails {
-            visible: root.open
-            addon: root.model
+        // Built only while the row is open: collapsed rows (nearly all of them) carry no details.
+        Loader {
+            active: root.open
+            visible: active
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.iconSizes.large + Kirigami.Units.largeSpacing * 2
             Layout.rightMargin: Kirigami.Units.largeSpacing
             Layout.bottomMargin: Kirigami.Units.largeSpacing
+            sourceComponent: AddonDetails { addon: root.model }
         }
 
         Kirigami.Separator { Layout.fillWidth: true }
