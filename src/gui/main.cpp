@@ -1,8 +1,11 @@
 #include <QApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QLibraryInfo>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQuickStyle>
 #include <QTimer>
 #include "gui/wam_controller.hpp"
 
@@ -46,6 +49,19 @@ void watchQmlDir(QQmlApplicationEngine& engine, const QString& dir) {
     rewatch();
 }
 
+// True when a Quick Controls style of this name is installed in a QML import path. Asking
+// for a style that is missing makes the whole UI fail to load, so check first.
+bool hasQuickStyle(const QString& name) {
+    QStringList roots{QLibraryInfo::path(QLibraryInfo::QmlImportsPath)};
+    for (const char* var : {"QML_IMPORT_PATH", "QML2_IMPORT_PATH"})
+        roots += qEnvironmentVariable(var).split(QDir::listSeparator(), Qt::SkipEmptyParts);
+    QString rel = name;
+    rel.replace('.', '/');
+    for (const auto& root : roots)
+        if (QFileInfo::exists(QDir(root).filePath(rel + "/qmldir"))) return true;
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -54,6 +70,13 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("wow-addon-manager");
     QApplication::setDesktopFileName("wow-addon-manager");
+
+    // Use KDE's Quick Controls style (if installed) unless the user chose another one. Qt only picks
+    // it on its own when the platform theme is found, which depends on how and from
+    // where the app is started; without it the app falls back to Fusion and Kirigami
+    // loses its desktop theme. Must run before any QML that imports Controls loads.
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE") && hasQuickStyle("org.kde.desktop"))
+        QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
 
     wam::gui::WamController controller; // declared before the engine so it outlives it
     QQmlApplicationEngine engine;
