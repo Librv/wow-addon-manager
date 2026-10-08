@@ -1,5 +1,8 @@
 #include "gui/installed_addons_model.hpp"
 #include "gui/format.hpp"
+#include <QSet>
+#include <algorithm>
+#include <iterator>
 #include <QStringList>
 
 namespace wam::gui {
@@ -117,6 +120,10 @@ QString InstalledAddonsModel::describe(const wam::InstalledAddon& a) const {
 }
 
 void InstalledAddonsModel::setChangelog(qint64 fileId, const QString& state, const QString& text) {
+    // A reply for a file that is no longer installed (the addon was updated meanwhile) has no row to show it.
+    const bool installed = std::any_of(addons_.begin(), addons_.end(),
+                                       [&](const wam::InstalledAddon& a) { return static_cast<qint64>(a.fileId) == fileId; });
+    if (!installed) return;
     changelogs_.insert(fileId, {state, text});
     for (int i = 0; i < addons_.size(); ++i)
         if (static_cast<qint64>(addons_[i].fileId) == fileId)
@@ -141,6 +148,12 @@ void InstalledAddonsModel::setFlavorNames(const QHash<qint64, QString>& names) {
 void InstalledAddonsModel::setAddons(const QList<wam::InstalledAddon>& addons) {
     beginResetModel();
     addons_ = addons;
+    // Changelogs are kept across reloads, but only for files that are still installed:
+    // after an update the old version's text would otherwise stay in memory for good.
+    QSet<qint64> installed;
+    for (const auto& a : addons_) installed.insert(static_cast<qint64>(a.fileId));
+    for (auto it = changelogs_.begin(); it != changelogs_.end();)
+        it = installed.contains(it.key()) ? std::next(it) : changelogs_.erase(it);
     endResetModel();
 }
 
