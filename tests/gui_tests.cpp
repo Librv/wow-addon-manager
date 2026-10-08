@@ -286,6 +286,29 @@ void testInstalledRowTexts() {
     check(role(0, InstalledAddonsModel::ChangelogStateRole) == "ready", "and the row shows it");
 }
 
+void testChangelogsArePruned() {
+    InstalledAddonsModel m;
+    InstalledAddon a; a.modId = 1; a.fileId = 100; a.fileName = "a-1.zip";
+    InstalledAddon b; b.modId = 2; b.fileId = 200; b.fileName = "b-1.zip";
+    m.setAddons({a, b});
+    m.setChangelog(100, "ready", "first");
+    m.setChangelog(200, "ready", "other");
+    check(m.changelogState(100) == "ready" && m.changelogState(200) == "ready", "changelogs are kept for installed files");
+
+    a.fileId = 101; // addon 1 was updated: file 100 is gone
+    m.setAddons({a, b});
+    check(m.changelogState(100) == "none", "an updated addon's old changelog is dropped on reload");
+    check(m.changelogState(200) == "ready", "an unchanged addon keeps its changelog on reload");
+
+    m.setChangelog(100, "ready", "late reply"); // the request finished after the update
+    check(m.changelogState(100) == "none", "a late changelog for a file that is no longer installed is ignored");
+    m.setChangelog(101, "ready", "new");
+    check(m.changelogState(101) == "ready", "a changelog for the installed file is stored");
+
+    m.setAddons({});
+    check(m.changelogState(101) == "none" && m.changelogState(200) == "none", "removing every addon drops every changelog");
+}
+
 void testFormatCount() {
     check(formatCount(0).isEmpty() && formatCount(-5).isEmpty(), "formatCount is empty for an unknown count");
     check(formatCount(842) == "842" && formatCount(999) == "999", "small counts are written out");
@@ -492,6 +515,7 @@ int main(int argc, char** argv) {
     testFlavorsModel();
     testInstalledFlavorNames();
     testInstalledRowTexts();
+    testChangelogsArePruned();
     testFormatCount();
     testSearchResultsModel();
     testInstalledAddonsModel();
