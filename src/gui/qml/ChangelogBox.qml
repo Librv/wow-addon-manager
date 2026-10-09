@@ -24,7 +24,9 @@ Rectangle {
 
     property string loadState: "none"   // `changelogState` on the model ("state" is taken by Item)
     property string text
+    // Bound by the parent, which keeps it across row recreation. Changed by asking for a toggle.
     property bool expanded: false
+    signal toggleRequested()
 
     readonly property bool isMarkdown: loadState === "ready" && text.length > 0
     readonly property string shownText: loadState === "ready"
@@ -39,7 +41,8 @@ Rectangle {
 
     // Filled in by relayout(): is it longer than collapsedLines, and where does the "…" go.
     property bool collapsible: false
-    property real shownHeight: 0
+    // Starts at the collapsed height, so a freshly created row does not begin at zero and jump.
+    property real shownHeight: collapsedLines * fm.lineSpacing
     property real cutX: 0
     property real cutY: 0
     property real cutHeight: 0
@@ -158,7 +161,7 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.expanded = true
+                        onClicked: root.toggleRequested()
                     }
                 }
             }
@@ -177,7 +180,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.expanded = false
+                onClicked: root.toggleRequested()
             }
         }
     }

@@ -14,11 +14,13 @@ Item {
 
     required property var model
     property bool open: false
+    property bool changelogOpen: false
 
     signal toggleRequested()
     signal removeRequested()
     signal stopTrackingRequested()
     signal checkRequested()
+    signal changelogToggleRequested()
 
     width: ListView.view ? ListView.view.width : implicitWidth
     height: col.implicitHeight
@@ -83,6 +85,8 @@ Item {
         AddonDetails {
             visible: root.open
             addon: root.model
+            changelogOpen: root.changelogOpen
+            onChangelogToggleRequested: root.changelogToggleRequested()
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.iconSizes.large + Kirigami.Units.largeSpacing * 2
             Layout.rightMargin: Kirigami.Units.largeSpacing

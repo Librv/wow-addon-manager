@@ -22,6 +22,16 @@ StyledPage {
         expanded = open
     }
 
+    // Changelogs that are open, by mod id. Kept here rather than in the row: the
+    // ListView destroys rows that scroll out of view, which would close them.
+    property var changelogOpen: ({})
+    function toggleChangelog(modId) {
+        const open = Object.assign({}, changelogOpen)
+        if (open[modId]) delete open[modId]
+        else open[modId] = true
+        changelogOpen = open
+    }
+
     actions: [
         Kirigami.Action {
             text: qsTr("Check for updates")
@@ -58,7 +68,9 @@ StyledPage {
 
         delegate: AddonRow {
             open: !!page.expanded[model.modId]
+            changelogOpen: !!page.changelogOpen[model.modId]
             onToggleRequested: page.toggle(model.modId)
+            onChangelogToggleRequested: page.toggleChangelog(model.modId)
             onCheckRequested: {
                 wam.checkUpdate(model.modId)
                 page.win.showPassiveNotification(qsTr("Checking %1…").arg(model.displayName))
