@@ -11,7 +11,10 @@ ColumnLayout {
     id: root
 
     required property var addon
+    property bool changelogOpen: false
     readonly property var win: QQC2.ApplicationWindow.window
+
+    signal changelogToggleRequested()
 
     spacing: Kirigami.Units.largeSpacing
 
@@ -88,6 +91,8 @@ ColumnLayout {
             Layout.fillWidth: true
             loadState: root.addon.changelogState
             text: root.addon.changelogText
+            expanded: root.changelogOpen
+            onToggleRequested: root.changelogToggleRequested()
         }
     }
 
