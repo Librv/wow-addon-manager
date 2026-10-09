@@ -22,6 +22,15 @@ Kirigami.Dialog {
     // Loaded, and there is nothing to install (or it failed): worth showing in red.
     readonly property bool problem: flavorBox.currentIndex >= 0 && !wam.installFiles.loading && !hasVersions
     // Installing a flavor other than the WoW folder's (only when that flavor is known).
+    // Release types in dropdown order; the labels add how many versions each has among those loaded.
+    readonly property var channelNames: ["release", "beta", "alpha"]
+    readonly property var channelLabels: channelNames.map(n => n + " (" + wam.installFiles.channelCounts[n]
+                                                          + (wam.installFiles.partial ? "+" : "") + ")")
+    // The other release types that have versions, e.g. "beta (8), alpha (2)"; empty if none.
+    readonly property string otherChannelsNote: channelNames
+        .filter(n => n !== wam.installFiles.channel && wam.installFiles.channelCounts[n] > 0)
+        .map(n => n + " (" + wam.installFiles.channelCounts[n] + (wam.installFiles.partial ? "+" : "") + ")")
+        .join(", ")
     readonly property bool flavorMismatch: !linkMode && flavorBox.currentIndex >= 0
                                            && wam.wowFlavorId !== 0 && flavorBox.currentValue !== wam.wowFlavorId
 
@@ -145,8 +154,8 @@ Kirigami.Dialog {
             QQC2.ComboBox {
                 id: channelBox
                 Layout.fillWidth: true
-                model: ["release", "beta", "alpha"]
-                onActivated: wam.setInstallChannel(currentText)
+                model: dialog.channelLabels
+                onActivated: wam.setInstallChannel(dialog.channelNames[currentIndex])
             }
         }
 
@@ -201,11 +210,17 @@ Kirigami.Dialog {
             wrapMode: Text.WordWrap
             color: dialog.problem ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
             opacity: dialog.problem ? 1 : 0.7
-            text: flavorBox.currentIndex < 0 ? qsTr("Pick a flavor to see the available versions.")
-                : wam.installFiles.loading ? qsTr("Loading versions…")
-                : wam.installFiles.error.length > 0 ? qsTr("Could not load versions: %1").arg(wam.installFiles.error)
-                : wam.installFiles.hasMore ? qsTr("No %1 versions found so far for %2.").arg(channelBox.currentText).arg(flavorBox.currentText)
-                : qsTr("No %1 versions for %2.").arg(channelBox.currentText).arg(flavorBox.currentText)
+            text: {
+                if (flavorBox.currentIndex < 0) return qsTr("Pick a flavor to see the available versions.")
+                if (wam.installFiles.loading) return qsTr("Loading versions…")
+                if (wam.installFiles.error.length > 0) return qsTr("Could not load versions: %1").arg(wam.installFiles.error)
+                const base = wam.installFiles.hasMore
+                    ? qsTr("No %1 versions found so far for %2.").arg(wam.installFiles.channel).arg(flavorBox.currentText)
+                    : qsTr("No %1 versions for %2.").arg(wam.installFiles.channel).arg(flavorBox.currentText)
+                return dialog.otherChannelsNote.length > 0
+                    ? base + " " + qsTr("Other release types have versions: %1.").arg(dialog.otherChannelsNote)
+                    : base
+            }
         }
 
         // Fetches more once everything already loaded is on screen.

@@ -2,6 +2,7 @@
 #include <QAbstractListModel>
 #include <QList>
 #include <QString>
+#include <QVariantMap>
 #include "core/curseforge_client.hpp"
 
 namespace wam::gui {
@@ -32,6 +33,8 @@ class InstallFilesModel : public QAbstractListModel {
     Q_PROPERTY(QString channel READ channel NOTIFY changed)
     Q_PROPERTY(bool hasMore READ hasMore NOTIFY changed)    // more versions than shown, or more on the server
     Q_PROPERTY(int count READ rowCount NOTIFY changed)
+    Q_PROPERTY(QVariantMap channelCounts READ channelCounts NOTIFY changed) // loaded versions per channel
+    Q_PROPERTY(bool partial READ partial NOTIFY changed)    // the server has pages not loaded yet, so counts may grow
 public:
     enum Role { FileIdRole = Qt::UserRole + 1, DisplayNameRole, FileNameRole, ChannelRole,
                 GameVersionsRole, DateRole, BlockedRole };
@@ -48,6 +51,8 @@ public:
     QString error() const { return error_; }
     QString channel() const { return channel_; }
     bool hasMore() const;
+    QVariantMap channelCounts() const;
+    bool partial() const { return serverHasMore_; }
     Q_INVOKABLE qint64 fileIdAt(int row) const;
 
     // ---- driven by WamController
