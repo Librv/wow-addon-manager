@@ -60,6 +60,12 @@ int InstallFilesModel::filteredCount() const {
     return n;
 }
 
+QVariantMap InstallFilesModel::channelCounts() const {
+    QVariantMap counts{{"release", 0}, {"beta", 0}, {"alpha", 0}};
+    for (const auto& f : all_) counts[f.channel] = counts.value(f.channel, 0).toInt() + 1;
+    return counts;
+}
+
 bool InstallFilesModel::hasMore() const {
     return filteredCount() > limit_ || serverHasMore_;
 }

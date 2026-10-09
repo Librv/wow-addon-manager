@@ -143,6 +143,10 @@ void testInstallFilesModel() {
     check(m.rowCount() == 5, "only the first five versions are shown");
     check(m.fileIdAt(0) == 110 && m.fileIdAt(1) == 108, "versions are sorted newest first and filtered to the release channel");
     check(m.filteredCount() == 6, "filteredCount counts every loaded version in the channel");
+    const QVariantMap counts = m.channelCounts();
+    check(counts.value("release").toInt() == 6 && counts.value("beta").toInt() == 4 && counts.value("alpha").toInt() == 0,
+          "channelCounts counts every loaded version per release type, including empty ones as 0");
+    check(!m.partial(), "partial is false when the server has no more pages");
     check(m.hasMore(), "hasMore is true while loaded versions are hidden");
 
     m.showMore();
@@ -158,6 +162,8 @@ void testInstallFilesModel() {
     p.begin(1, 2);
     p.append({makeFile(50, "release"), makeFile(49, "beta")}, 0, 6);
     check(p.nextIndex() == 2 && p.hasMore(), "nextIndex follows the pages received and hasMore reflects the server");
+    check(p.partial() && p.channelCounts().value("release").toInt() == 1 && p.channelCounts().value("beta").toInt() == 1,
+          "partial is true while the server has pages not loaded, and counts cover the loaded files");
     check(p.wantsFetch(), "a short window with more on the server asks for another page");
     p.setLoading(true);
     check(!p.wantsFetch(), "no second fetch is requested while one is in flight");
