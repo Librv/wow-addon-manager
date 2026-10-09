@@ -21,6 +21,9 @@ Kirigami.Dialog {
     readonly property bool hasVersions: wam.installFiles.count > 0
     // Loaded, and there is nothing to install (or it failed): worth showing in red.
     readonly property bool problem: flavorBox.currentIndex >= 0 && !wam.installFiles.loading && !hasVersions
+    // Installing a flavor other than the WoW folder's (only when that flavor is known).
+    readonly property bool flavorMismatch: !linkMode && flavorBox.currentIndex >= 0
+                                           && wam.wowFlavorId !== 0 && flavorBox.currentValue !== wam.wowFlavorId
 
     signal installStarted(string name)
     signal settingsRequested()
@@ -66,6 +69,17 @@ Kirigami.Dialog {
         selectedId = files.count > 0 ? files.fileIdAt(0) : 0
     }
 
+    // The footer action's work, run directly or after the flavor confirmation.
+    function performAction() {
+        if (dialog.linkMode) {
+            wam.linkFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
+        } else {
+            wam.installFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
+            dialog.installStarted(dialog.modName)
+        }
+        dialog.close()
+    }
+
     Connections {
         target: wam.installFiles
         function onChanged() { dialog.ensureSelection() }
@@ -79,13 +93,8 @@ Kirigami.Dialog {
             enabled: (dialog.linkMode || wam.hasWowPath) && dialog.selectedId !== 0 && flavorBox.currentIndex >= 0
                      && !wam.installFiles.loading
             onTriggered: {
-                if (dialog.linkMode) {
-                    wam.linkFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
-                } else {
-                    wam.installFile(dialog.modId, dialog.selectedId, flavorBox.currentValue)
-                    dialog.installStarted(dialog.modName)
-                }
-                dialog.close()
+                if (dialog.flavorMismatch) flavorConfirm.open()
+                else dialog.performAction()
             }
         }
     ]
@@ -208,5 +217,15 @@ Kirigami.Dialog {
             text: wam.installFiles.loading ? qsTr("Loading…") : qsTr("Show more versions")
             onClicked: wam.showMoreInstallFiles()
         }
+    }
+
+    // Shown when the chosen flavor differs from the WoW folder's flavor in Settings.
+    Kirigami.PromptDialog {
+        id: flavorConfirm
+        title: qsTr("Install for a different flavor?")
+        subtitle: qsTr("Your WoW folder is set to %1, but this addon is being installed for %2. It may not work in the other flavor.")
+                      .arg(wam.wowFlavorName).arg(flavorBox.currentText)
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        onAccepted: dialog.performAction()
     }
 }
