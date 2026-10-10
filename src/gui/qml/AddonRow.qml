@@ -22,7 +22,7 @@ Item {
     signal checkRequested()
     signal changelogToggleRequested()
 
-    width: ListView.view ? ListView.view.width : implicitWidth
+    width: parent ? parent.width : implicitWidth
     height: col.implicitHeight
 
     ColumnLayout {

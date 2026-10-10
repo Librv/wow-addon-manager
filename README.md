@@ -214,7 +214,7 @@ touches one file:
 | File | What it is |
 | --- | --- |
 | `Main.qml` | window, sidebar, popups wiring |
-| `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows are open |
+| `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows and changelogs are open. Every row keeps a placeholder of its last known height and the real `AddonRow` is only loaded near the viewport, which keeps the scrollbar exact |
 | `AddonRow.qml` | one installed addon: header line; raises signals, owns no state |
 | `AddonDetails.qml` | the expandable details (facts, folders, changelog, buttons) |
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |

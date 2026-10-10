@@ -116,9 +116,11 @@ Rectangle {
         y: root.padding
         width: root.width - root.padding * 2
         // Collapsed: only up to the cut line. Expanded: everything plus "Show less" when it can be collapsed again.
-        height: root.expanded
-                ? edit.contentHeight + (root.collapsible ? less.height + Kirigami.Units.smallSpacing : 0)
-                : root.shownHeight
+        // From shownHeight, which relayout() settles once the width is known, not from the
+        // live text height: a row created already open would otherwise report a huge height
+        // for a moment (text laid out before its width is known), and the layouts around
+        // it keep that stale value.
+        height: root.shownHeight + (root.expanded && root.collapsible ? less.height + Kirigami.Units.smallSpacing : 0)
         clip: true
 
         TextEdit {
