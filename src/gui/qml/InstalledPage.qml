@@ -32,6 +32,17 @@ StyledPage {
         changelogOpen = open
     }
 
+    // The last height of each row by mod id, and the height of a collapsed row.
+    // They size a row's placeholder while the row itself is not loaded (see the list).
+    // The map is changed in place on purpose: nothing binds to its contents.
+    property var rowHeights: ({})
+    property real collapsedHeight: Kirigami.Units.gridUnit * 5
+    function rowHeight(modId) { return rowHeights[modId] || collapsedHeight }
+    function rememberHeight(modId, height, isOpen) {
+        rowHeights[modId] = height
+        if (!isOpen) collapsedHeight = height
+    }
+
     actions: [
         Kirigami.Action {
             text: qsTr("Check for updates")
@@ -66,17 +77,43 @@ StyledPage {
         id: list
         model: wam.installedAddons
 
-        delegate: AddonRow {
-            open: !!page.expanded[model.modId]
-            changelogOpen: !!page.changelogOpen[model.modId]
-            onToggleRequested: page.toggle(model.modId)
-            onChangelogToggleRequested: page.toggleChangelog(model.modId)
-            onCheckRequested: {
-                wam.checkUpdate(model.modId)
-                page.win.showPassiveNotification(qsTr("Checking %1…").arg(model.displayName))
+        // A ListView only knows the height of the delegates it has loaded and guesses
+        // the rest from their average, so one tall row (an open changelog) made the
+        // scrollbar jump as rows came and went. So every row keeps a cheap placeholder
+        // (cacheBuffer keeps them all), sized from the row's last known height, and the
+        // real row is only loaded while it is near the viewport. Total height stays exact.
+        cacheBuffer: 1000000
+
+        delegate: Item {
+            id: slot
+            required property var model
+            readonly property real reach: list.height / 2   // half a screen on each side
+            // From the remembered height, not `height`: that one depends on whether the row is loaded.
+            readonly property bool near: y + page.rowHeight(model.modId) > list.contentY - reach && y < list.contentY + list.height + reach
+
+            width: ListView.view.width
+            height: loader.item ? loader.item.height : page.rowHeight(model.modId)
+
+            Loader {
+                id: loader
+                width: parent.width
+                active: slot.near
+                onLoaded: page.rememberHeight(slot.model.modId, item.height, item.open)
+                sourceComponent: AddonRow {
+                    model: slot.model
+                    open: !!page.expanded[slot.model.modId]
+                    changelogOpen: !!page.changelogOpen[slot.model.modId]
+                    onToggleRequested: page.toggle(slot.model.modId)
+                    onChangelogToggleRequested: page.toggleChangelog(slot.model.modId)
+                    onCheckRequested: {
+                        wam.checkUpdate(slot.model.modId)
+                        page.win.showPassiveNotification(qsTr("Checking %1…").arg(slot.model.displayName))
+                    }
+                    onRemoveRequested: { removeDialog.target = { modId: slot.model.modId, displayName: slot.model.displayName }; removeDialog.open() }
+                    onStopTrackingRequested: wam.untrackAddon(slot.model.modId)
+                    onHeightChanged: page.rememberHeight(slot.model.modId, height, open)
+                }
             }
-            onRemoveRequested: { removeDialog.target = { modId: model.modId, displayName: model.displayName }; removeDialog.open() }
-            onStopTrackingRequested: wam.untrackAddon(model.modId)
         }
 
         Kirigami.PlaceholderMessage {
