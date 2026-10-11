@@ -32,15 +32,20 @@ StyledPage {
         changelogOpen = open
     }
 
-    // The last height of each row by mod id, and the height of a collapsed row.
-    // They size a row's placeholder while the row itself is not loaded (see the list).
-    // The map is changed in place on purpose: nothing binds to its contents.
+    // The last height of each row by mod id, and the height of a collapsed row. They size
+    // a row's placeholder while the real row is not loaded (see the list). The map is
+    // changed in place on purpose: nothing binds to its contents.
     property var rowHeights: ({})
     property real collapsedHeight: Kirigami.Units.gridUnit * 5
+    property bool collapsedMeasured: false
     function rowHeight(modId) { return rowHeights[modId] || collapsedHeight }
     function rememberHeight(modId, height, isOpen) {
         rowHeights[modId] = height
-        if (!isOpen) collapsedHeight = height
+        if (isOpen) return
+        // The first closed row replaces the guess; after that only a taller one (a row
+        // that wraps) raises it, so the estimate for unseen rows does not flip around.
+        if (!collapsedMeasured) { collapsedMeasured = true; collapsedHeight = height }
+        else if (height > collapsedHeight) collapsedHeight = height
     }
 
     actions: [
@@ -87,18 +92,40 @@ StyledPage {
         delegate: Item {
             id: slot
             required property var model
+            // The row's height while its real row is not loaded or has not settled yet. It
+            // follows the page's guess for a row not seen so far, then the row's own height.
+            property real known: page.rowHeight(model.modId)
+            property bool settled: false
             readonly property real reach: list.height / 2   // half a screen on each side
-            // From the remembered height, not `height`: that one depends on whether the row is loaded.
-            readonly property bool near: y + page.rowHeight(model.modId) > list.contentY - reach && y < list.contentY + list.height + reach
+            // Reads `known`, not `height`: that one depends on whether the row is loaded.
+            readonly property bool near: y + known > list.contentY - reach && y < list.contentY + list.height + reach
 
             width: ListView.view.width
-            height: loader.item ? loader.item.height : page.rowHeight(model.modId)
+            height: loader.item && settled ? loader.item.height : known
+
+            // A new row lays itself out over its first moments and its height wanders
+            // meanwhile. The placeholder keeps its height until the row has settled, so
+            // nothing below it moves.
+            Timer {
+                id: settle
+                interval: 100
+                onTriggered: {
+                    if (!loader.item) return
+                    slot.settled = true
+                    slot.known = loader.item.height
+                    page.rememberHeight(slot.model.modId, slot.known, loader.item.open)
+                }
+            }
 
             Loader {
                 id: loader
                 width: parent.width
                 active: slot.near
-                onLoaded: page.rememberHeight(slot.model.modId, item.height, item.open)
+                onItemChanged: {
+                    slot.settled = false
+                    if (item) settle.restart()
+                    else settle.stop()
+                }
                 sourceComponent: AddonRow {
                     model: slot.model
                     open: !!page.expanded[slot.model.modId]
@@ -111,7 +138,10 @@ StyledPage {
                     }
                     onRemoveRequested: { removeDialog.target = { modId: slot.model.modId, displayName: slot.model.displayName }; removeDialog.open() }
                     onStopTrackingRequested: wam.untrackAddon(slot.model.modId)
-                    onHeightChanged: page.rememberHeight(slot.model.modId, height, open)
+                    onHeightChanged: if (slot.settled) {
+                        slot.known = height
+                        page.rememberHeight(slot.model.modId, height, open)
+                    }
                 }
             }
         }
