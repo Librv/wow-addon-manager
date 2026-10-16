@@ -102,6 +102,23 @@ Applies to code comments, docs, commit messages, PR text and UI strings.
   `grep -rnP '\x{2014}' --exclude-dir=build --exclude-dir=.git .`; it should
   print nothing.
 - Plain, short sentences. Say what something does and why, not how clever it is.
+- **Easy on the eyes.** People skim docs; write for that:
+  - Keep paragraphs to about three lines (around 50 words). Split a longer
+    one, or turn it into a list.
+  - Use a list for anything parallel: steps (numbered), options, buttons,
+    features. One item, one idea.
+  - Use a table for lookups and comparisons: packages per distro, file
+    locations, endpoints.
+  - Lead with what the reader does or gets. Reasons and edge cases come
+    after, or in a linked doc.
+  - Give each topic a heading, so a reader can find it by scanning headings.
+  - Bold the name of the thing an item is about (a button, a page, an
+    option), not words for emphasis.
+  - Keep comments in example code blocks to one short line.
+- **The README is for people using the app.** Class names, API endpoints and
+  implementation detail go in `docs/`; the README links there when needed.
+  Quote UI labels exactly as the app shows them (`Choose zip…`, not
+  `Choose zip...`).
 - UI text uses sentence case ("Check for updates") and the single ellipsis
   character `…` for items that open a dialog or show progress
   ("Choose zip…", "Loading…").

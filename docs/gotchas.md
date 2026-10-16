@@ -5,12 +5,11 @@ takes more than a few minutes to figure out.
 
 ## Build
 
-- **Stale objects after a header change.** If linking fails with "undefined
-  reference" to something plainly defined (for example
-  `CurseForgeClient::getMods`), or the app misbehaves after a struct changed,
-  the build directory holds old object files. Usually caused by extracted files
-  keeping timestamps older than the build outputs. Fix:
-  `cmake --build build --clean-first`. Do this after any header change.
+- **Stale objects after a header change.** Symptoms: "undefined reference" to
+  something plainly defined (like `CurseForgeClient::getMods`), or odd
+  behaviour after a struct changed. Cause: files with timestamps older than
+  the build outputs, often from copying or extracting. Fix:
+  `cmake --build build --clean-first`, after any header change.
 - **`find_package(libzip)` breaks on Debian/Ubuntu**, whose CMake config
   references helper binaries that may be missing. The build uses pkg-config
   for libzip instead; keep it that way.

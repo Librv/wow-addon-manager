@@ -8,7 +8,7 @@ touches one file.
 | File | What it is |
 | --- | --- |
 | `Main.qml` | window, sidebar, popups wiring; pages live in a `Kirigami.PagePool` |
-| `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows and changelogs are open. Every row keeps a placeholder of its last known height and the real `AddonRow` is only loaded near the viewport, which keeps the scrollbar exact |
+| `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows and changelogs are open |
 | `AddonRow.qml` | one installed addon: header line; raises signals, owns no state |
 | `AddonDetails.qml` | the expandable details (facts, folders, changelog, buttons) |
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
@@ -29,6 +29,9 @@ touches one file.
 - Icons are Breeze icon names.
 - Open/expanded state that must survive scrolling lives on the page, not on
   the row: `ListView` destroys rows that scroll out of view.
+- `InstalledPage` keeps a placeholder of each row's last known height and
+  loads the real `AddonRow` only near the viewport. That keeps the scrollbar
+  exact while rows open and close.
 - `AddonDetails` receives the list row as `addon`, so a new model role is
   usable there as `addon.<role>`.
 

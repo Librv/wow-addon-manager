@@ -21,10 +21,12 @@ need no key.
 | Blocked-download link | `https://www.curseforge.com/api/v1/mods/<mod>/files/<file>/download` | the website's own endpoint, not the documented API; can change without notice |
 
 The code was first written where `api.curseforge.com` was unreachable, so
-none of these were exercised live at the time. When you confirm one against
-a real response, note it here. The tests parse sample JSON, not live
-responses: when you change parsing, add a sample to the tests and say in the
-commit whether you checked it against the real API.
+none of these were tried live at the time. When you confirm one against a
+real response, note it here.
+
+Tests use sample JSON, never live responses. When you change parsing, add a
+sample to the tests, and say in the commit whether you checked it against the
+real API.
 
 ## Facts that are easy to get wrong
 

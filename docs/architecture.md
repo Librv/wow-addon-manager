@@ -41,24 +41,33 @@ data/         .desktop file
 | `installed.json` | `$XDG_DATA_HOME/wow-addon-manager/` | one `InstalledAddon` per tracked addon (see `src/core/state_store.hpp`) |
 
 Every field added later has an "unknown" default, so files from older
-versions load. Notable unknowns: `fileId == 0` (adopted, no file yet),
-`flavorTypeId == 0` (flavor unknown), empty `author` / `iconUrl` /
-`fileDate` (backfilled by the GUI at startup when there is an API key).
+versions load. The notable ones:
 
-`config.json` and `installed.json` are written atomically (`writeFileAtomic`:
-temp file, sync, rename), so a crash leaves the old file or the new one. An
-`installed.json` that still cannot be read is moved aside as
-`installed.json.damaged-<time>` and the list starts empty; the CLI warns and
-the GUI reports it, so the next save cannot overwrite what the old file held.
+- `fileId == 0`: adopted, no file yet
+- `flavorTypeId == 0`: flavor unknown
+- empty `author`, `iconUrl`, `fileDate`: filled in by the GUI at startup when
+  there is an API key
+
+Writes and damage:
+
+- `config.json` and `installed.json` are written atomically
+  (`writeFileAtomic`: temp file, sync, rename). A crash leaves the old file or
+  the new one.
+- An `installed.json` that cannot be read is moved aside as
+  `installed.json.damaged-<time>`, and the list starts empty. The CLI warns,
+  the GUI reports it, and the next save cannot overwrite the old data.
 
 ## Flavors
 
-CurseForge models a WoW flavor as a numeric `gameVersionTypeId`. The list is
-fetched from `GET /v1/games/1/version-types`, cached in `flavors.json`, and
-refreshed every time the GUI starts. User renames survive a refresh.
-Each addon stores the id and name it was installed for, and updates stay
-within that id. The WoW folder's flavor is worked out from the folder name
-(`_retail_`, `_classic_era_`, ...) against the cache, so it works offline.
+CurseForge models a WoW flavor as a numeric `gameVersionTypeId`.
+
+- The list comes from `GET /v1/games/1/version-types`, is cached in
+  `flavors.json`, and is refreshed every time the GUI starts. User renames
+  survive a refresh.
+- Each addon stores the id and name it was installed for. Updates stay within
+  that id.
+- The WoW folder's flavor is worked out from the folder name (`_retail_`,
+  `_classic_era_`, ...) against the cache, so it works offline.
 
 ## Installs and updates
 
@@ -75,19 +84,23 @@ Every install, update and manual install goes through
 4. On success, rename the backup away and delete it. That rename is the
    commit point.
 
-A leftover `.wam-backup` means an interrupted swap. The CLI restores it before
-any command that touches `AddOns/`; the GUI does it at startup. An update
-re-derives the folder set from the new zip, which is also how an adopted
-addon gets a real `fileId`.
+- A leftover `.wam-backup` means an interrupted swap. The CLI restores it
+  before any command that touches `AddOns/`; the GUI does it at startup.
+- An update takes its folder set from the new zip. That is also how an
+  adopted addon gets a real `fileId`.
 
-Known gaps: no lock between processes (run one `wam` or `wam-gui` at a time),
-and a crash between the committed swap and saving `installed.json` leaves the
-state one version behind until the next update.
+Known gaps:
+
+- No lock between processes: run one `wam` or `wam-gui` at a time.
+- A crash between the committed swap and saving `installed.json` leaves the
+  state one version behind until the next update.
 
 ## Reconciling existing addons
 
-`scan` reads `## X-Curse-Project-ID:` from each untracked folder's `.toc` and
-groups folders by mod id. `adopt` records them with `fileId = 0` and
-`adopted = true`; nothing on disk changes. Most multi-module addons only tag
-their primary module, so with an API key `adopt --mod-id` also matches the
-mod's files' `moduleNames` against untracked folders.
+- `scan` reads `## X-Curse-Project-ID:` from each untracked folder's `.toc`
+  and groups folders by mod id.
+- `adopt` records them with `fileId = 0` and `adopted = true`. Nothing on disk
+  changes.
+- Most multi-module addons tag only their primary module. With an API key,
+  `adopt --mod-id` also matches the mod's files' `moduleNames` against
+  untracked folders.
