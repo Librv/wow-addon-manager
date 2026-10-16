@@ -45,19 +45,7 @@ Binaries:
 ctest --test-dir build --output-on-failure
 ```
 
-If you update an existing checkout in place and the link step fails with
-"undefined reference" to something that is plainly defined in the source
-(for example `CurseForgeClient::getMods`), the build directory is holding
-object files from an older version, usually because extracted files kept
-timestamps older than the existing build outputs. Rebuild everything:
-
-```sh
-cmake --build build --clean-first
-```
-
-Do this after any update that changes a header, not just when the link
-fails: a stale object compiled against an older struct layout can link
-without error and still misbehave at runtime.
+If linking fails after an update, see `docs/gotchas.md`.
 
 To install (the `.desktop` file is what lets the desktop associate the window
 with the app; without it Qt may log a harmless-looking "Could not register app
@@ -206,47 +194,6 @@ stays responsive during searches, downloads and updates. Requests are
 processed one at a time, in order, so an Apply clicked while an update check
 is still running waits behind the remaining checks.
 
-## Working on the UI
-
-The views are small components under `src/gui/qml/`, so a change usually
-touches one file:
-
-| File | What it is |
-| --- | --- |
-| `Main.qml` | window, sidebar, popups wiring |
-| `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows and changelogs are open. Every row keeps a placeholder of its last known height and the real `AddonRow` is only loaded near the viewport, which keeps the scrollbar exact |
-| `AddonRow.qml` | one installed addon: header line; raises signals, owns no state |
-| `AddonDetails.qml` | the expandable details (facts, folders, changelog, buttons) |
-| `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
-| `AppColors.qml` | the colour palette (page background, inset field colour, border); change colours here |
-| `StyledPage.qml` | base of every page, gives them the shared background |
-| `AddonMeta.qml` | the facts line under a description (downloads, date, version, flavor; empty ones are left out), shared by Search and AddOns |
-| `AuthorLine.qml` | the "By Author" line under an addon's title (hidden while the author is unknown) |
-| `FolderChip.qml`, `AddonIcon.qml`, `FieldNote.qml` | small shared pieces |
-| `SearchPage.qml`, `SettingsPage.qml`, `InstallDialog.qml`, `UpdatesDialog.qml`, `ScanDialog.qml` | the other pages and popups |
-
-Components with knobs (colours, line counts, texts) keep them in a "Tunables"
-block at the top. `AddonDetails` receives the list row as `addon`, so a new
-model role is usable there as `addon.role` without further plumbing.
-
-To see edits without rebuilding, run the GUI against the source folder:
-
-```sh
-WAM_QML_DIR=$PWD/src/gui/qml ./build/wam-gui     # fish: env WAM_QML_DIR=(pwd)/src/gui/qml ./build/wam-gui
-```
-
-It loads the QML from disk and reloads the window every time a `.qml` file in
-that folder is saved (a file with a syntax error is reported on the terminal
-and the window comes back once it is fixed). Without the variable the app uses
-the QML compiled into the binary. New `.qml` files still need adding to
-`WAM_QML_FILES` in `CMakeLists.txt` for normal builds. `src/gui/qml/qmldir`
-exists only for dev mode, so that the `AppColors` singleton is found when
-loading from disk; a new singleton has to be listed there too.
-
-The palette is three fixed hex colours sampled from the Breeze Dark settings
-page, so surfaces look the same on any system scheme (text and icons still
-follow the system theme).
-
 ## Using the CLI
 
 ```sh
@@ -311,7 +258,7 @@ flavor called "Classic" rather than whichever "... Classic" flavor happens to
 be listed first. The name is resolved via `GET /v1/games/1/version-types` and
 passed through as the API's native `gameVersionTypeId` filter; it is not
 string-matched against file metadata, which doesn't contain flavor names (see
-"Fixed since initial testing" below). If `--flavor` matches nothing, the CLI
+`docs/curseforge-api.md`). If `--flavor` matches nothing, the CLI
 prints the current list of known flavor names.
 
 ## Flavors
@@ -427,98 +374,8 @@ Known limitations:
 - Addon icons are fetched from CurseForge's CDN on demand by Qt Quick's own
   image loader; they need network access and are not cached to disk by wam.
 
-## Fixed since initial testing
+## Contributing
 
-Two real bugs from the first pass, both root-caused against the live API
-docs rather than patched by guesswork:
-
-1. **`search` always returned 0 results.** The code filtered by a hardcoded
-   `classId=4471`, which is actually CurseForge's *Minecraft Modpacks* class.
-   Class ids are global across every game on CurseForge, not per-game, so
-   filtering WoW mods by a Minecraft class id matched nothing. Fixed by
-   discovering the real "Addons" class id from `GET /v1/categories?gameId=1`
-   at runtime instead of hardcoding a number.
-2. **`--flavor` never matched, regardless of capitalization.** WoW files'
-   `gameVersions` field holds real client version numbers (e.g. `"11.0.7"`),
-   not flavor labels, so `"Retail"` never appears there at all. Flavor is
-   actually encoded as a numeric `gameVersionTypeId`, shown on CurseForge's
-   website as "Retail" / "Classic Era" / etc. but only available from the
-   API. Fixed by resolving the flavor name against
-   `GET /v1/games/1/version-types` and passing the numeric id straight
-   through as the API's own `gameVersionTypeId` filter on
-   `/v1/mods/{modId}/files`.
-
-A third, from running the GUI:
-
-3. **"Created graphical object was not placed in the graphics scene" on every
-   tab switch.** Kirigami's `PageRow` instantiates a pushed Component or URL
-   with `createObject()` and a plain `QtObject` as the parent (see
-   `pagesLogic` in Kirigami's `PageRow.qml`), and QtQuick warns whenever a
-   visual item is created under a non-visual parent. Reproduced with plain
-   QtQuick: `createObject` with a `QtObject` parent warns, with an `Item`
-   parent or none it does not. Pages now live in a `Kirigami.PagePool`, which
-   creates each one once in C++ (`createWithInitialProperties`, which does not
-   warn) and reuses it, so navigation no longer goes through that path.
-
-## Layout
-
-```
-src/core/   wam_core: config, HTTP, CurseForge client, installer, state, .toc reader, reconciler
-src/cli/    the wam CLI
-src/gui/    Qt adapter layer (worker thread, controller, list models) and wam-gui
-src/gui/qml/ Kirigami views (pages, the update and scan popups, the icon component)
-data/       .desktop file
-tools/      ram-test.sh (idle RAM measurement, see docs/ram-testing.md)
-tests/      test_main.cpp (core), gui_tests.cpp (adapter layer)
-```
-
-The GUI talks to the core through `WamController` (GUI thread, what QML
-sees) and `WamWorker` (one dedicated thread that owns the core's config,
-state and API client). The core has no Qt dependency at all.
-
-## Note on this environment
-
-Built and tested in a sandboxed container (Ubuntu 24.04, GCC 13, CMake 3.28,
-libzip 1.7, Qt 6.4.2) whose network egress does not include
-`api.curseforge.com`. What that means for what has and hasn't been verified:
-
-- **Verified here:** the core library and CLI build; `wam_tests` passes
-  (129 checks), including zip extraction, the zip-slip and absolute-path
-  guards, the install swap, rollback after a partial swap, crash recovery,
-  the traversal guards, state round-trips (including a pre-flavor state file),
-  flavor matching, resolving install-folder names to flavors, the flavor
-  cache (merging without losing your names, hand-edited and damaged files),
-  the HTML-to-text converter, the config round-trip, `.toc` reading, reconciliation and adoption, and parsing of
-  CurseForge mod and file-page responses (icons, per-mod flavors, dates,
-  pagination) against sample JSON.
-  Several of these tests were checked to fail when the code they cover is
-  removed.
-- **Compiled and tested here, on Qt 6.4.2:** the GUI adapter layer (worker,
-  controller, models) builds and `wam_gui_tests` passes (115 checks), including
-  a run through the real worker thread that scans a temporary AddOns folder
-  and adopts from it, offline, and the install window's version list (channel
-  filter, five at a time, paging, de-duplication), the installed rows' texts
-  and changelog state, the editable flavor list, and flavor detection from
-  the cache with no network. The `wam-gui` executable was linked using a
-  scratch-only workaround for Qt 6.4 (which lacks `loadFromModule`); the
-  shipped code requires Qt 6.5.
-- **Confirmed by real use, not by me:** an earlier version of the QML views
-  was run on a desktop with Kirigami 6. That surfaced the `[undefined]` to
-  QString binding errors on the update page (fixed at the source: the review
-  queue's `head` always has every key, with a test that fails without the fix)
-  and the graphics-scene warning above.
-- **Not verified here:** the QML in this version (the PagePool navigation, the
-  sidebar settings, the install, update and scan popups, the Settings flavor
-  list and notes, the expandable installed rows, the blocked-download window,
-  the icon component and the reworked lists) has only been linted for syntax, not rendered. The
-  `PagePool`, `PagePoolAction` and drawer properties it uses were checked
-  against Kirigami's upstream `master` sources, which may differ from the
-  version you have installed. Nothing has been exercised against
-  the live CurseForge API (`search`, `files`, `install`, `update`, adopt's
-  `moduleNames` cross-check, batched mod lookups for icons, paged file lists,
-  and flavor detection). In particular, icons rely on the mod's
-  `logo.thumbnailUrl`, the install window's flavor list on
-  `latestFilesIndexes[].gameVersionTypeId`, and version dates on the file's
-  `fileDate`; if a mod reports none of these you get the placeholder icon,
-  every flavor, or no date. Those
-  need checking on your machine with your real key.
+Developer documentation lives in `AGENTS.md` (rules for people and AI agents
+alike) and `docs/`: architecture, GUI development and live QML reload,
+CurseForge API notes, testing, gotchas and design decisions.
