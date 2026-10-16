@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake -S . -B build:*)",
+      "Bash(cmake --build build:*)",
+      "Bash(ctest --test-dir build:*)",
+      "Bash(./build/tests/wam_tests:*)",
+      "Bash(./build/tests/wam_flavor_tests:*)",
+      "Bash(./build/tests/wam_gui_tests:*)"
+    ]
+  }
+}
