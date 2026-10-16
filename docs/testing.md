@@ -15,13 +15,28 @@ ctest --test-dir build --output-on-failure
 Everything runs offline, with no API key. On a machine with no display, run
 the GUI tests with `QT_QPA_PLATFORM=offscreen`.
 
+## Rules for tests
+
+- **A test must fail when the code breaks in a way that matters.** "Matters"
+  means a user would notice: an addon is lost or half-installed, a file lands
+  outside `AddOns/`, an older state file stops loading, the wrong version is
+  offered, the GUI shows wrong data or hangs. Prove it: break the code on
+  purpose (or revert the fix) and watch the test fail before you keep it.
+- **Write the 20% that catch 80% of the bugs.** The install swap, rollback
+  and recovery, path guards, state and config loading, update selection,
+  CurseForge parsing fallbacks, and the worker round trip come first. Skip
+  tests of plain getters, model roles that only return a field, string
+  constants, anything the compiler already checks, and `check(true, ...)`.
+- **One check per outcome.** Check the whole result a user would see, not
+  every field of it on its own line.
+- **No sleeps.** Wait on a condition with a short bound (`waitFor` in
+  `tests/gui_tests.cpp`). A hang should fail in seconds, not minutes.
+
 ## Writing tests
 
 - Use the hand-rolled harness: `check(condition, "what is being checked")`.
   No test framework.
 - Feed CurseForge parsing with sample JSON, never live calls.
-- For a bug fix, write the test so it fails without the fix, and check that
-  it does.
 
 ## What tests do not cover
 
