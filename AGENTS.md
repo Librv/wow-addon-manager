@@ -69,8 +69,10 @@ These always apply.
    absolute zip entries).
 5. **Old state files must keep loading.** New fields in `installed.json`,
    `config.json` or `flavors.json` get defaults, and a test loads an older file.
-6. **Add or update a test with every behaviour change**, in the existing
-   hand-rolled `check()` style. No test framework dependency.
+6. **Test what matters, and only that.** A change that could break something
+   a user relies on gets a test that fails when it breaks, in the existing
+   hand-rolled `check()` style. No test framework dependency. Follow the
+   rules in `docs/testing.md`.
 7. **New QML files** go in `WAM_QML_FILES` in `CMakeLists.txt`. A new singleton
    also goes in `src/gui/qml/qmldir`.
 8. **Say what was and was not verified.** Nothing here has a live CurseForge
@@ -80,6 +82,10 @@ These always apply.
    the matching doc (README for users, `docs/` or this file for developers) in
    the same commit. A new design choice that someone might later undo gets a
    short record in `docs/decisions/`.
+10. **No long sleeps.** Do not `sleep` while building, testing or running the
+    app unless nothing else works. Wait on a condition instead (poll with a
+    short bound, like `waitFor` in the GUI tests). If a sleep is unavoidable,
+    keep it to a few seconds.
 
 ## Writing style
 
