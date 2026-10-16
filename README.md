@@ -1,392 +1,297 @@
 # wow-addon-manager
 
-A WoW addon manager for Linux. The engine (`wam_core`) talks to CurseForge,
-installs and updates addons, and keeps its own record of what it put where.
-It has two front ends over that same core:
+A World of Warcraft addon manager for Linux. It installs and updates addons
+from CurseForge and keeps its own record of what it put where.
 
-- `wam`: a CLI covering everything the core can do
-- `wam-gui`: a Qt 6 / Kirigami desktop app (a sidebar with AddOns, Search and
-  Settings; scanning for addons you already have and an update review, both as
-  popups; manual install for blocked downloads), with each addon's CurseForge
-  icon shown in the lists
+It comes in two forms that share one engine:
+
+- **`wam-gui`**, a desktop app (Qt 6 and Kirigami)
+- **`wam`**, a command-line tool that can do everything the app can
+
+## Features
+
+- Search CurseForge, install any version, and update with one click
+- Release, beta and alpha channels, per addon
+- Each addon remembers its WoW flavor (Retail, Classic Era, and so on)
+- Finds addons you installed before wam and starts tracking them
+- Installs that cannot leave an addon half-updated, even after a crash
+- Works with no API key and no network for anything local
 
 ## Build
 
-Core dependencies (Ubuntu/Debian package names, with CachyOS/Arch
-equivalents in parentheses): `cmake`, `libcurl4-openssl-dev` (`curl`),
-`nlohmann-json3-dev` (`nlohmann-json`), `libzip-dev` (`libzip`),
-`libssl-dev` (`openssl`).
+Dependencies:
 
-GUI dependencies: Qt 6.5 or newer (`qt6-base`, `qt6-declarative`) to build,
-plus Kirigami and the KDE Qt Quick Controls style at runtime (`kirigami`,
-`qqc2-desktop-style` on Arch; package names from memory, check with your
-package manager). Qt 6.5 is a hard floor because `main.cpp` uses
-`QQmlApplicationEngine::loadFromModule`.
+| What | Arch / CachyOS | Debian / Ubuntu |
+| --- | --- | --- |
+| Core | `cmake`, `curl`, `nlohmann-json`, `libzip`, `openssl` | `cmake`, `libcurl4-openssl-dev`, `nlohmann-json3-dev`, `libzip-dev`, `libssl-dev` |
+| GUI, to build | `qt6-base`, `qt6-declarative` (Qt 6.5 or newer) | `qt6-base-dev`, `qt6-declarative-dev` |
+| GUI, to run | `kirigami`, `qqc2-desktop-style` | Kirigami and qqc2-desktop-style for Qt 6 |
+
+Debian and Ubuntu name the runtime packages differently between releases, so
+search your package manager for them.
+
+Build and test:
 
 ```sh
 cmake -S . -B build
 cmake --build build -j
-```
-
-The GUI is on by default. To build only the CLI and tests, with no Qt
-needed:
-
-```sh
-cmake -S . -B build -DWAM_BUILD_GUI=OFF
-```
-
-Binaries:
-- `build/wam`: the CLI
-- `build/wam-gui`: the GUI (unless `WAM_BUILD_GUI=OFF`)
-- `build/tests/wam_tests`: offline core tests (no network or API key)
-- `build/tests/wam_gui_tests`: offline tests for the Qt adapter layer
-
-```sh
 ctest --test-dir build --output-on-failure
 ```
 
-If linking fails after an update, see `docs/gotchas.md`.
+To build only the CLI, with no Qt needed, add `-DWAM_BUILD_GUI=OFF` to the
+first command.
 
-To install (the `.desktop` file is what lets the desktop associate the window
-with the app; without it Qt may log a harmless-looking "Could not register app
-ID" portal message on startup):
+This gives you:
+
+- `build/wam`: the CLI
+- `build/wam-gui`: the app
+- `build/tests/`: the test suites (offline, no API key needed)
+
+Install to `~/.local`:
 
 ```sh
 cmake --install build --prefix ~/.local
 ```
 
-## Configure
+Installing also adds the `.desktop` file, which lets your desktop match the
+window to the app. If linking fails after an update, see `docs/gotchas.md`.
 
-Either use the GUI's Settings page, or:
+## Set up
+
+Use the app's Settings page, or the CLI:
 
 ```sh
-./build/wam config set-key        # paste the key when asked; it is not shown
-./build/wam config set-path /path/to/WoW/_retail_
-./build/wam config show
+wam config set-key        # paste your CurseForge API key; it is not shown
+wam config set-path /path/to/World of Warcraft/_retail_
+wam config show
 ```
 
-`set-key` reads the key from stdin so it stays out of your shell history
-(`wam config set-key <key>` still works but leaves it there).
+- **API key:** needed for anything that talks to CurseForge. `set-key` reads
+  it from the terminal, so it stays out of your shell history.
+- **WoW path:** the flavor folder, like `_retail_`. Addons go into
+  `Interface/AddOns` inside it.
+- Both are optional. Listing, removing, manual installs, scanning and
+  adopting all work without a key.
 
-Config lives at `$XDG_CONFIG_HOME/wow-addon-manager/config.json`
-(`~/.config/wow-addon-manager/config.json` by default), readable only by you:
-wam writes it with mode `0600` and tightens an older, looser one when it
-loads it. Both the key and the
-path are optional: local-only operations (`list`, `remove`,
-`install-manual`, `scan`, `adopt`) work with no key, though anything
-touching the AddOns folder still needs `wow_path`.
+### Where wam keeps its files
 
-The flavors CurseForge defines for WoW are cached next to it in
-`flavors.json`, keyed by CurseForge's own key and carrying the display name
-you see:
+| File | Default location | Holds |
+| --- | --- | --- |
+| `config.json` | `~/.config/wow-addon-manager/` | the API key and WoW path. Readable only by you. |
+| `flavors.json` | next to `config.json` | the WoW flavors and the names you gave them |
+| `installed.json` | `~/.local/share/wow-addon-manager/` | every addon wam tracks |
 
-```json
-{ "wow-forever": { "id": 12345, "name": "Forever", "api_name": "Forever" } }
-```
+`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` move them if set. Files from older
+versions of wam load fine; with an API key, the app fills in the details they
+lack (authors, versions, dates) at startup.
 
-The GUI refreshes it from CurseForge every time it starts, so the flavor list
-(and the WoW folder's flavor) work offline after the first run. Edit the
-names in Settings, or by hand; a name you changed is kept when the list
-refreshes, and `api_name` (CurseForge's own) is what the reset button
-restores. The numeric `id` is stored too, because the API filters by it.
+## Using the app
 
-Installed-addon state lives at
-`$XDG_DATA_HOME/wow-addon-manager/installed.json`
-(`~/.local/share/wow-addon-manager/installed.json` by default). Files written
-by older versions (no flavor fields) load fine; those addons simply show an
-unknown flavor.
+The sidebar on the left switches between three pages. **Close Sidebar**
+shrinks it to icons. Pages keep their state, so switching away does not lose
+your search.
 
-## Using the GUI
+All network and disk work runs in the background, so the window never
+freezes. Requests run one at a time, in order. An **Apply** clicked during an
+update check waits until the check is done.
 
-A sidebar sits to the left of the page you are on and is open by default. Its
-"Close Sidebar" button shrinks it to a strip of icons; it never disappears
-completely. Pages are created once and kept, so switching tabs does not lose
-your search text or results.
+### AddOns
 
-- **AddOns** (page title "Installed AddOns"): everything wam tracks, one row
-  per addon, each as big as a Search result: its CurseForge icon, its name,
-  "By Author" under it (filled in at startup with an API key for addons
-  recorded before authors were stored), and below that a line of facts in the
-  same order as on the Search tab, minus the download count: release date of
-  the installed file (clock icon), its version (puzzle-piece icon) and the
-  flavor (no icon), for example `Sep 29, 2026 · v9.3.2 · Retail`. An adopted
-  addon with no file yet has no date or version and reads `Adopted · flavor`.
-  On each row:
-  - a **refresh button** checks that one addon for updates (the result is a
-    notification, or the update popup if one is found);
-  - an **arrow** opens the details. Any number of rows can be open at once, and
-    they stay open while you scroll. The details are the version (with the zip's file name after it), release
-    channel, flavor, release date, install time and source; the folders the
-    addon owns; the changelog of the installed version, rendered as markdown on a darker
-    panel (about six lines, then "... Show more" in link colour right after the
-    last word shown; fetched when the details open); and
-    **View on CurseForge**, which only appears once the addon is tied to a
-    CurseForge file;
-  - the overflow menu removes the addon (deleting its folders) or stops
-    tracking it (files untouched).
+Every addon wam tracks, one row each:
 
-  An adopted addon has no CurseForge file yet, so its details offer **Link to
-  CurseForge...** instead: pick the version that matches what is installed,
-  and wam records that file. Nothing is downloaded and nothing on disk
-  changes. The flavor is the one you pick in that window (it starts on the
-  WoW folder's), because CurseForge only lists a file under a flavor it is
-  built for. Until it is known the details show a flavor box; linking, or
-  updating the addon, fills it in and the box goes away. A linked addon has
-  **Install another version...** instead. Details for addons recorded before
-  these fields existed (version name, release date, page link) are filled in
-  at startup with an API key.
+- its icon, name and author
+- a facts line: release date, version and flavor, for example
+  `Sep 29, 2026 · v9.3.2 · Retail`. An adopted addon with no version yet shows
+  `Adopted · Retail`.
 
-  The toolbar has three buttons:
-  - **Check for updates** queues every addon with a newer file and opens the
-    update popup (below).
-  - **Review updates (N)** appears while updates are queued, to reopen the
-    popup if you closed it early.
-  - **Scan for existing addons** opens the scan window (below).
-- **Search**: search CurseForge; each result shows its name, author and summary,
-  then a line with the download count (download icon), the date of the latest
-  file (clock icon) and its version (puzzle-piece icon), and has an **Install**
-  button that opens the install window (below). The icons are Breeze names set
-  in `AddonMeta.qml`'s Tunables.
-- **Settings**: CurseForge API key, WoW folder, and under it the **flavor** of
-  that folder, each with its explanation directly beneath it. The flavor is
-  worked out from the folder name when the path is saved (`_retail_` is
-  Retail, `_classic_era_` is Classic Era, `_ptr_` and `_beta_` count as
-  Retail, and so on), matched against the cached flavors, so it works offline
-  once the cache exists. If it cannot be worked out, for example for
-  `_classic_`, which several flavors share, pick it by hand. The flavor box is
-  greyed out until a path is set, and changing the path clears the flavor too.
-  Below is the **Flavors** list: CurseForge's key on the left and an editable
-  display name on the right, with a reset button on a name you changed.
+On each row:
 
-Three popups:
+- **Refresh** checks that addon for updates.
+- **The arrow** opens its details. Open as many as you like; they stay open
+  while you scroll.
+- **The menu** has **Remove…** (deletes its folders) and **Stop tracking
+  (keep files)**.
 
-- **Install window.** Opens from Search. The flavor starts as the one from
-  Settings; changing it here affects only this install, and refetches the
-  version list. Choose the release type (release, beta, alpha) and a version:
-  the newest five in that channel are listed, and "Show more versions" at the
-  bottom lists more, asking CurseForge for the next page only once everything
-  already loaded is showing. Install is enabled as soon as a version is
-  selected (the newest is pre-selected). When the chosen flavor or release type
-  has no versions, the "Version" heading and list give way to a red message
-  naming both. It also opens from an installed addon's "Install another
-  version...", starting on that addon's flavor, and, in link mode, from "Link to
-  CurseForge...". If the author has blocked third-party downloads, the
-  "point wam at the zip" window follows: "Open on CurseForge" opens the direct
-  download link for that exact file in your browser
-  (`https://www.curseforge.com/api/v1/mods/<mod>/files/<file>/download`), and
-  "Choose downloaded zip..." installs it.
+The details show:
 
-- **Update review.** Diffs are reviewed **one addon at a time**: **Apply**
-  installs that update and moves to the next diff, **Apply all** (to the right
-  of Apply) accepts every remaining update in one go, and **Skip** drops an
-  update without installing it. The popup closes itself when the queue is
-  empty. Updates stay within the flavor the addon was installed for. If the
-  author has disabled third-party downloads, the diff shows "Open on
-  CurseForge" and "Choose zip..."; download the file in your browser, then
-  point wam at it. Blocked rows are skipped by Apply all.
-- **Existing addons.** Scans your AddOns folder for addons wam doesn't track
-  yet. Folders whose `.toc` carries a CurseForge id are grouped by mod, shown
-  with the mod's real name and icon, and adopted with one click, or all at
-  once with "Adopt all matched". Folders with no tag get their own row: use
-  "Search" to look the addon up on CurseForge, or type its mod id and adopt it
-  by hand. Adopting only records the folders; nothing on disk changes, and the
-  version stays unknown until the addon's first update. With an API key,
-  adopting a mod also claims its other untracked modules (most multi-module
-  addons only tag their primary one).
+- version and zip name, release channel, flavor, release date, install time
+  and source
+- the folders the addon owns
+- the changelog of the installed version, with **… Show more** for long ones
+- **View on CurseForge**, once the addon is linked to a CurseForge file
+- **Install another version…**
 
-All network and disk work runs on a single worker thread, so the window
-stays responsive during searches, downloads and updates. Requests are
-processed one at a time, in order, so an Apply clicked while an update check
-is still running waits behind the remaining checks.
+An adopted addon has **Link to CurseForge…** instead of the last two:
+
+- Pick the version you have installed, and wam records it. Nothing is
+  downloaded or changed on disk.
+- The window starts on the WoW folder's flavor; change it if the addon is for
+  another one.
+- Until the flavor is known, the details show a flavor box. Linking or
+  updating fills it in.
+
+The toolbar:
+
+- **Check for updates** checks every addon and opens the update review.
+- **Review updates (N)** reopens the review if you closed it early.
+- **Scan for existing addons** finds addons wam does not track yet.
+
+### Search
+
+Search CurseForge. Each result shows its name, author, summary, download
+count, latest release date and version. **Install** opens the install window.
+
+### Settings
+
+- **CurseForge API key**
+- **WoW folder**, and under it its **flavor**, which is worked out from the
+  folder name: `_retail_` is Retail, `_classic_era_` is Classic Era, and
+  `_ptr_` and `_beta_` count as Retail.
+  - If it cannot tell (for example `_classic_`, which several flavors share),
+    pick it by hand.
+  - Changing the folder clears the flavor.
+- **Flavors**: every WoW flavor CurseForge knows, with a name you can edit.
+  The reset button brings back CurseForge's name.
+
+### Install window
+
+Opens from **Install** in Search, or **Install another version…** on an
+addon.
+
+- Pick the flavor, release type and version. The newest version is selected
+  for you.
+- The flavor starts as the one in Settings. Changing it here affects only
+  this install.
+- Five versions show at first; **Show more versions** lists more.
+- If there are no versions for that flavor and release type, the window says
+  so.
+
+### Update review
+
+Shows one update at a time:
+
+- **Apply** installs it and moves to the next.
+- **Apply all (N)** installs every remaining update.
+- **Skip** drops it without installing.
+
+Updates stay within the flavor the addon was installed for. The window closes
+when nothing is left.
+
+### Blocked downloads
+
+Some authors block downloads by other apps. When that happens:
+
+1. **Open on CurseForge** opens the download for that exact file in your
+   browser.
+2. **Choose downloaded zip…** (or **Choose zip…** in the update review)
+   installs the file you downloaded.
+
+**Apply all** skips blocked updates.
+
+### Existing addons
+
+**Scan for existing addons** looks for addons in your AddOns folder that wam
+does not track yet.
+
+- Addons whose files name their CurseForge project are matched and shown with
+  their real name and icon. Adopt one, or all with **Adopt all matched (N)**.
+- Any other folder gets its own row. Use **Search** to find it on CurseForge,
+  or type its mod id and adopt it.
+
+Adopting only records the folders; nothing on disk changes. The version stays
+unknown until the first update. With an API key, adopting an addon also picks
+up its other folders (most multi-folder addons only tag one).
 
 ## Using the CLI
 
 ```sh
-# search CurseForge
-./build/wam search questie
-
-# see which WoW flavors CurseForge currently knows about (Retail, Classic Era,
-# etc.). Discovered live from the API, never hardcoded, so new Classic
-# re-releases show up automatically
-./build/wam flavors
-
-# list files for a mod, optionally filtered to one flavor
-./build/wam files <modId> --flavor Retail
-
-# install the newest release file, optionally pinned to a channel/flavor
-./build/wam install <modId> --channel release --flavor Retail
-./build/wam install <modId> --channel beta
-
-# if the author has blocked third-party downloads, `install` says so and
-# prints the exact install-manual command to run once you have downloaded
-# the file yourself from the CurseForge site
-./build/wam install-manual <modId> <fileId> /path/to/downloaded.zip
-
-# see everything the app has installed/tracked (with flavor)
-./build/wam list
-
-# remove an addon (deletes its folders + drops it from state)
-./build/wam remove <modId>
-
-# drop an addon from state WITHOUT touching its files, for re-running
-# scan/adopt from a clean slate during debugging
-./build/wam untrack <modId>
-
-# update a tracked addon (shows current vs. latest, asks before applying).
-# Uses the flavor the addon was installed for; --flavor overrides and re-saves it
-./build/wam update <modId>
-./build/wam update <modId> --yes             # skip the confirmation prompt
-
-# update everything tracked, one diff/prompt per addon
-./build/wam update-all
-
-# find folders in AddOns/ that wam doesn't track yet, grouped by whatever
-# CurseForge mod id their .toc claims (X-Curse-Project-ID)
-./build/wam scan
-
-# adopt every untracked folder tagged for a given mod, plus any sibling
-# modules an API key lets us cross-check via that mod's moduleNames
-./build/wam adopt --mod-id <modId>
-
-# manually assign one folder (e.g. no X-Curse-Project-ID tag was found,
-# or you know better than the tag) to a mod id
-./build/wam adopt --folder <folderName> --mod-id <modId>
-
-# record which flavor an adopted addon is for
-./build/wam set-flavor <modId> "Retail"
+wam search questie                        # search CurseForge
+wam flavors                               # list WoW flavors
+wam files <modId> --flavor Retail         # list a mod's files
+wam install <modId>                       # newest release
+wam install <modId> --channel beta --flavor "Classic Era"
+wam install-manual <modId> <fileId> addon.zip   # for blocked downloads
+wam list                                  # everything wam tracks
+wam update <modId>                        # shows the change, asks first
+wam update <modId> --yes                  # no question
+wam update-all                            # one question per addon
+wam remove <modId>                        # delete its folders, stop tracking
+wam untrack <modId>                       # stop tracking, keep the files
+wam scan                                  # find addons wam does not track
+wam adopt --mod-id <modId>                # track every folder of that mod
+wam adopt --folder <name> --mod-id <modId>  # track one folder by hand
+wam set-flavor <modId> Retail             # set an adopted addon's flavor
 ```
 
-`--flavor` matches case-insensitively against CurseForge's own flavor names
-(`Retail`, `Classic Era`, `Burning Crusade Classic`, ...) or their slugs. An
-exact name or slug match wins over a substring match, so `classic` means the
-flavor called "Classic" rather than whichever "... Classic" flavor happens to
-be listed first. The name is resolved via `GET /v1/games/1/version-types` and
-passed through as the API's native `gameVersionTypeId` filter; it is not
-string-matched against file metadata, which doesn't contain flavor names (see
-`docs/curseforge-api.md`). If `--flavor` matches nothing, the CLI
-prints the current list of known flavor names.
+Notes:
+
+- **Blocked downloads:** `install` says so and prints the exact
+  `install-manual` command to run once you have the zip.
+- **`--flavor`** ignores case and matches CurseForge's names or slugs. An
+  exact match wins, so `classic` means the flavor called "Classic". If
+  nothing matches, `wam` lists the flavors it knows.
+- **Updates** use the flavor the addon was installed for. `--flavor` on
+  `update` changes it.
 
 ## Flavors
 
-CurseForge models a WoW flavor as a numeric `gameVersionTypeId`. wam stores
-the id and the display name on each installed addon (`flavorTypeId` and
-`flavorName` in `installed.json`), and shows the current name from
-`flavors.json`, so renaming a flavor in Settings changes it everywhere.
-Updates reuse the stored id, so an addon keeps updating within the flavor you
-chose when you installed it. An adopted addon with no flavor yet is checked
-in, and when updated recorded as, the WoW folder's flavor, since that is where
-it lives.
+A flavor is a version of WoW: Retail, Classic Era, and so on.
 
-Note that one `wow_path` points at one flavor folder (for example `_retail_`),
-and the GUI records that folder's flavor in `config.json` (`wow_flavor_id`,
-`wow_flavor_name`) as the default for installs. The install window lets you
-pick another flavor for a single addon; that is stored on the addon only.
-Until multi-flavor support lands, nothing stops you from installing a Classic
-file into a Retail folder: the flavor chooses which CurseForge file variant to
-download, it does not check it against the folder. The CLI does not use the
-folder's flavor; it still takes `--flavor` per command.
+- Each addon keeps the flavor it was installed for, and updates stay within
+  it.
+- Renaming a flavor in Settings renames it everywhere.
+- An adopted addon with no flavor uses the WoW folder's flavor.
+- The app uses the WoW folder's flavor for new installs. The CLI does not; it
+  takes `--flavor` per command.
+- wam does not check that a file matches your folder. Installing a Classic
+  file into a Retail folder is possible.
 
-## Safe installs and updates
+## Safe installs
 
-Every install, update and manual install goes through
-`AddonInstaller::installZip`, which is transactional:
+Every install and update works like this:
 
-1. The zip is fully extracted into `AddOns/.wam-staging` first. If extraction
-   fails (corrupt zip, unsafe entry, disk full), the AddOns folder has not
-   been touched.
-2. Only then are the previous version's folders, plus any existing folder the
-   zip would overwrite, moved into `AddOns/.wam-backup`, and the staged
-   folders renamed into place. Staging, backup and AddOns share a filesystem
-   (they are all inside AddOns, which also holds when AddOns is a symlink),
-   so this is plain renames.
-3. If anything fails during the swap, everything is rolled back to the exact
-   previous state and the error is reported.
-4. On success, the backup is renamed away and deleted. Renaming is the commit
-   point, so a leftover `.wam-backup` always means "interrupted mid-swap".
+1. The zip is unpacked into a staging folder. If that fails, your AddOns
+   folder is untouched.
+2. The old version is moved to a backup folder and the new one moved in.
+3. If anything fails, the old version is put back exactly as it was.
+4. Only then is the backup deleted.
 
-If wam is killed mid-swap (crash, power loss), the next run restores the
-backed-up folders automatically: the CLI does it before any command that
-touches AddOns, and the GUI does it at startup. Modules a new version no
-longer ships are removed when the swap commits. A zip with no addon folders
-at all is refused rather than installed as an empty update.
+If wam is killed in the middle (a crash, power loss), the next run restores
+the old version on its own. Also:
 
-Related hardening in the same pass:
-- Extraction rejects absolute-path entries as well as `..` entries, and fails
-  on a truncated read or write instead of quietly leaving a short file.
-- `removeFolders` and `installZip` refuse folder names that are not a single
-  plain path component, so a bad entry in `installed.json` cannot delete
-  anything outside AddOns.
-- Downloaded zips are deleted even when the install throws.
-- `.wam-*` working folders are never reported by `scan`.
+- Folders a new version no longer ships are removed.
+- A zip with no addon in it is refused.
+- A zip cannot write outside your AddOns folder.
 
-## What it does and doesn't do
+## Not yet supported
 
-Does:
-- CurseForge search, file listing, install and update, driven entirely by the
-  public CurseForge API (`api.curseforge.com/v1`), WoW gameId 1
-- Discovers the Addons class id and WoW's flavor ids live from the API
-  (`/v1/categories`, `/v1/games/1/version-types`) and caches them for the
-  process lifetime, rather than hardcoding them. CurseForge class ids are
-  global across every game on the site, so a guessed constant is a latent
-  bug (see below)
-- Release/beta/alpha channel selection and per-addon flavor tracking
-- Detects author-blocked third-party downloads (`downloadUrl == null`) and
-  falls back to a PrismLauncher-style "point me at the file" flow
-- Reconciles addons that were already installed before wam existed. Each
-  top-level AddOns folder is checked for a `## X-Curse-Project-ID:` line in
-  its `.toc`, the id an addon's packaging tool stamps in at release time and
-  the same heuristic tools like WowUp use. `scan` reports what it finds,
-  grouped by mod id; `adopt` commits a match or a manual override into
-  `installed.json`. This identifies *which mod*, not *which file/version*
-  (there is no per-version tag), so an adopted addon is recorded with
-  `fileId = 0` ("unknown") until an update pins it to a real file. Most
-  multi-module addons only tag their *primary* module, so with an API key
-  `adopt --mod-id` also cross-checks the mod's known files' `moduleNames`
-  against what is sitting untracked on disk to claim the sibling modules.
-  Without a key only self-tagged folders adopt.
-- Updates with a clean swap (see "Safe installs"); an update always
-  re-derives the true folder set from the freshly extracted zip, which is
-  also how an adopted addon's `fileId = 0` becomes a real pinned file
-- Keeps working with no API key and no network for local operations
+- Updating to a specific version (updates always take the newest; use
+  **Install another version…** instead)
+- A progress bar for installs
+- Addon profiles, several WoW folders at once, GitHub or Wago as sources,
+  finding your WoW folder automatically
 
-Does not yet do:
-- Choosing a specific version when updating: the install window can install
-  any listed version, but updates always go to the newest file in the addon's
-  release channel
-- Install progress: the GUI shows an "Installing..." notice, not a progress bar
-- Addon profiles, multi-flavor support (several WoW folders at once),
-  GitHub/Wago sources, WoW auto-detection
+## Known limitations
 
-Known limitations:
-- No lock between processes: run one `wam` or `wam-gui` at a time. Two
-  installs racing on the same AddOns folder can confuse crash recovery.
-- If wam dies in the instant between a committed swap and saving
-  `installed.json`, the folders are the new version while the state still
-  says the old one. The next update corrects it, but an addon whose new
-  version added a module would not have that module tracked until then.
-- The install window sorts the versions it has loaded newest first by file
-  id, but the CurseForge docs I found do not say which order the API returns
-  pages in. If it returned oldest first, an addon with more than 50 files for
-  one flavor would show its oldest versions first. Check with a mod that has
-  many files (`GET /v1/mods/{id}/files?pageSize=5` and look at the dates).
-- "Open on CurseForge" for a blocked download uses the website's own
-  download endpoint, not the documented API; it is the form the site itself
-  uses, but it can change without notice. The file-details backfill uses
-  `POST /v1/mods/files` and the changelog `GET /v1/mods/{id}/files/{id}/changelog`,
-  both found in CurseForge's SDK documentation and not yet exercised here.
-- Changelogs are converted from HTML to plain text with a small converter
-  (paragraphs, lists and line breaks); unusual markup may look rough.
-- Addon icons are fetched from CurseForge's CDN on demand by Qt Quick's own
-  image loader; they need network access and are not cached to disk by wam.
+- Run one `wam` or `wam-gui` at a time. Two installs into the same AddOns
+  folder at once can confuse crash recovery.
+- If wam dies right after swapping in a new version but before saving its
+  records, it still lists the old version until the next update.
+- Some CurseForge requests (changelogs, filling in file details, the blocked
+  download link) are not yet confirmed against the live API. See
+  `docs/curseforge-api.md`.
+- Changelogs are converted to plain text simply; unusual formatting may look
+  rough.
+- Icons load from CurseForge each time and need network access.
 
 ## Contributing
 
-Developer documentation lives in `AGENTS.md` (rules for people and AI agents
-alike) and `docs/`: architecture, GUI development and live QML reload,
-CurseForge API notes, testing, gotchas and design decisions.
+Developer docs are in `AGENTS.md` (rules for people and AI agents) and
+`docs/`: architecture, GUI development, the CurseForge API, testing, gotchas
+and design decisions.
 
-Once per clone, turn on the commit check that refuses any commit containing
-your CurseForge API key:
+Once per clone, turn on the check that refuses commits containing your API
+key:
 
 ```sh
 git config core.hooksPath tools/git-hooks

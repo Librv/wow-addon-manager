@@ -4,24 +4,47 @@
 
 | Binary | Source | Covers |
 | --- | --- | --- |
-| `build/tests/wam_tests` | `tests/test_main.cpp` | zip extraction and its guards, the install swap, rollback, crash recovery, state round-trips (including old and damaged state files), config (including its file mode), `.toc` reading, reconciliation and adoption, flavor matching and cache, HTML-to-text, parsing of sample CurseForge JSON, HTTPS-only requests |
-| `build/tests/wam_flavor_tests` | `tests/flavor_names_test.cpp` | flavor display names |
-| `build/tests/wam_gui_tests` | `tests/gui_tests.cpp` | the adapter layer: worker thread, controller, models (install window version list, installed row texts, changelog state, flavor list, scan and adopt through the real worker), manual installs, and update check, apply, failed download and blocked download against a fake CurseForge |
+| `wam_tests` | `tests/test_main.cpp` | the core (list below) |
+| `wam_flavor_tests` | `tests/flavor_names_test.cpp` | flavor display names |
+| `wam_gui_tests` | `tests/gui_tests.cpp` | the Qt adapter layer (list below) |
+
+The binaries are in `build/tests/`. Run them all with:
 
 ```sh
 ctest --test-dir build --output-on-failure
 ```
 
-Everything runs offline, with no real API key. On a machine with no display,
-run the GUI tests with `QT_QPA_PLATFORM=offscreen`. Each suite has a 30 second
-CTest timeout; they finish in well under a second.
+`wam_tests` covers:
 
-Each test binary first points `XDG_CONFIG_HOME` and `XDG_DATA_HOME` at a temp
-folder (so no test can touch your real config and key) and sets
-`HttpClient::transportForTesting` to refuse every request. A test that needs
-CurseForge scripts `FakeCurseForge` in `tests/gui_tests.cpp` with the exact
-requests it expects and their responses; anything unscripted is reported as
-a failure. See `docs/decisions/0006-fake-http-in-tests.md`.
+- zip extraction and its guards, the install swap, rollback, crash recovery
+- state and config: round trips, old files, damaged files, the config's file
+  mode
+- `.toc` reading, scanning and adoption
+- flavor matching and the flavor cache
+- HTML-to-text, parsing of sample CurseForge JSON, HTTPS-only requests
+
+`wam_gui_tests` covers:
+
+- the worker thread and controller, including scan and adopt end to end
+- the models: install window versions, installed row texts, changelog state,
+  the flavor list
+- manual installs
+- against a fake CurseForge: update check, apply, failed download, blocked
+  download, and where the API key is sent
+
+## How tests stay offline and safe
+
+- Nothing needs a real API key or the network.
+- Each test binary first points `XDG_CONFIG_HOME` and `XDG_DATA_HOME` at a
+  temp folder, so no test can touch your real config and key.
+- Each one also sets `HttpClient::transportForTesting` to refuse every request.
+- A test that needs CurseForge scripts `FakeCurseForge` in
+  `tests/gui_tests.cpp` with the exact requests it expects. Anything
+  unscripted fails the test. See `docs/decisions/0006-fake-http-in-tests.md`.
+- Each suite has a 30 second CTest timeout; they finish in well under a
+  second.
+- On a machine with no display, run the GUI tests with
+  `QT_QPA_PLATFORM=offscreen`.
 
 ## CI
 
@@ -37,16 +60,18 @@ Neither job uses a CurseForge key or the network beyond installing packages.
 
 ## Rules for tests
 
-- **A test must fail when the code breaks in a way that matters.** "Matters"
-  means a user would notice: an addon is lost or half-installed, a file lands
-  outside `AddOns/`, an older state file stops loading, the wrong version is
-  offered, the GUI shows wrong data or hangs. Prove it: break the code on
-  purpose (or revert the fix) and watch the test fail before you keep it.
-- **Write the 20% that catch 80% of the bugs.** The install swap, rollback
-  and recovery, path guards, state and config loading, update selection,
-  CurseForge parsing fallbacks, and the worker round trip come first. Skip
-  tests of plain getters, model roles that only return a field, string
-  constants, anything the compiler already checks, and `check(true, ...)`.
+- **A test must fail when the code breaks in a way that matters**, meaning a
+  user would notice. For example: an addon is lost or half-installed, a file
+  lands outside `AddOns/`, an older state file stops loading, the wrong
+  version is offered, or the GUI shows wrong data or hangs.
+- **Prove it.** Break the code on purpose (or revert the fix) and watch the
+  test fail before you keep it.
+- **Write the 20% that catch 80% of the bugs.** These come first: the install
+  swap, rollback and recovery, path guards, state and config loading, update
+  selection, CurseForge parsing fallbacks, and the worker round trip.
+- **Skip tests that cannot catch a real break:** plain getters, model roles
+  that only return a field, string constants, anything the compiler checks,
+  and `check(true, ...)`.
 - **One check per outcome.** Check the whole result a user would see, not
   every field of it on its own line.
 - **No sleeps.** Wait on a condition with a short bound (`waitFor` in
