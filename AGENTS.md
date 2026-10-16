@@ -121,5 +121,6 @@ Applies to code comments, docs, commit messages, PR text and UI strings.
   describing the user-visible result ("Keep open changelogs open when their row
   scrolls away").
 - A body paragraph saying what was wrong or missing and what changes.
-- Commit straight to `main` unless asked otherwise; there is no CI yet, so
-  run the tests locally first.
+- Commit straight to `main` unless asked otherwise. Run the tests locally
+  first: CI (`.github/workflows/tests.yml`) only reports a break after the
+  push.

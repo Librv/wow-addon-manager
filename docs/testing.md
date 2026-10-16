@@ -23,6 +23,18 @@ CurseForge scripts `FakeCurseForge` in `tests/gui_tests.cpp` with the exact
 requests it expects and their responses; anything unscripted is reported as
 a failure. See `docs/decisions/0006-fake-http-in-tests.md`.
 
+## CI
+
+`.github/workflows/tests.yml` runs on every push to `main` and every pull
+request, in two jobs:
+
+- **Core, CLI and GUI (Arch):** the full build and all three suites, in an
+  `archlinux` container, because Ubuntu runners ship a Qt older than 6.5.
+- **Core and CLI without Qt (Ubuntu 24.04):** `-DWAM_BUILD_GUI=OFF` with no
+  Qt installed, so it fails if anything under `src/core/` starts needing Qt.
+
+Neither job uses a CurseForge key or the network beyond installing packages.
+
 ## Rules for tests
 
 - **A test must fail when the code breaks in a way that matters.** "Matters"
