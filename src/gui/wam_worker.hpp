@@ -154,6 +154,8 @@ private:
     wam::CurseForgeClient* requireClient(const char* context);
 
     void emitConfig();
+    // Reloads installed.json into state_, reporting a damaged file.
+    void loadState();
     qint64 effectiveFlavor(const wam::InstalledAddon& a) const;
     void emitFlavors();
     // Fetches CurseForge's flavor list and folds it into the cache. Silent on

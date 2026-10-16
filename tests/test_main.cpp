@@ -12,6 +12,7 @@
 #include "core/reconciler.hpp"
 #include "core/flavor_cache.hpp"
 #include "core/html_text.hpp"
+#include "core/http_client.hpp"
 
 #include <zip.h>
 #include <iostream>
@@ -21,6 +22,7 @@
 #include <fstream>
 #include <algorithm>
 #include <sstream>
+#include <sys/stat.h>
 
 using namespace wam;
 namespace fs = std::filesystem;
@@ -713,12 +715,76 @@ void testReconcilerAdopt(const fs::path& workDir) {
           "a rejected adopt leaves state completely untouched");
 }
 
+void testConfigKeepsTheKeyPrivate(const fs::path& workDir) {
+    const auto cfgHome = workDir / "cfg_private";
+    setenv("XDG_CONFIG_HOME", cfgHome.string().c_str(), 1);
+    const auto groupOrOther = fs::perms::group_all | fs::perms::others_all;
+    auto isPrivate = [&](const fs::path& p) { return (fs::status(p).permissions() & groupOrOther) == fs::perms::none; };
+
+    const mode_t oldMask = ::umask(022); // the usual default, which makes new files world-readable
+    Config cfg;
+    cfg.curseforge_api_key = "secret";
+    cfg.save();
+    ::umask(oldMask);
+    check(isPrivate(Config::configPath()) && isPrivate(Config::configPath().parent_path()) &&
+          !fs::exists(Config::configPath().string() + ".tmp"),
+          "config.json and its folder are readable only by their owner after a save");
+
+    // A config written before this was enforced is tightened on the next load.
+    fs::permissions(Config::configPath(), fs::perms::owner_read | fs::perms::owner_write |
+                    fs::perms::group_read | fs::perms::others_read);
+    fs::permissions(Config::configPath().parent_path(), fs::perms::owner_all | fs::perms::group_read |
+                    fs::perms::group_exec | fs::perms::others_read | fs::perms::others_exec);
+    auto back = Config::load();
+    check(back.curseforge_api_key == std::optional<std::string>("secret") &&
+          isPrivate(Config::configPath()) && isPrivate(Config::configPath().parent_path()),
+          "loading a world-readable config.json makes it and its folder private again");
+}
+
+void testDamagedStateIsSetAside(const fs::path& workDir) {
+    // What a crash in the middle of the old, non-atomic save could leave.
+    const auto dataHome = workDir / "damaged_data";
+    setenv("XDG_DATA_HOME", dataHome.string().c_str(), 1);
+    const auto file = dataHome / "wow-addon-manager" / "installed.json";
+    const std::string damaged = R"({"addons":[{"modId":7,"displayName":"Half)";
+    writeFile(file, damaged);
+
+    auto store = StateStore::load();
+    check(store.all().empty() && !store.damagedFile().empty() && readAll(store.damagedFile()) == damaged,
+          "an unreadable installed.json loads as empty and is kept, byte for byte, under another name");
+
+    InstalledAddon a; a.modId = 1; a.folders = {"New"};
+    store.upsert(a);
+    store.save();
+    check(readAll(store.damagedFile()) == damaged && StateStore::load().find(1).has_value(),
+          "saving afterwards writes a fresh installed.json and leaves the damaged copy alone");
+    setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
+}
+
+void testHttpIsHttpsOnly() {
+    // Uses the real transport: curl refuses the scheme before connecting,
+    // so nothing leaves the machine.
+    auto saved = HttpClient::transportForTesting;
+    HttpClient::transportForTesting = nullptr;
+    auto resp = HttpClient::get("http://127.0.0.1:9/v1/mods/1", {"x-api-key: secret"});
+    HttpClient::transportForTesting = saved;
+    check(resp.status == 0 && resp.body.find("protocol") != std::string::npos,
+          "a request carrying the API key is refused over plain http");
+}
+
 } // namespace
 
 int main() {
     auto workDir = fs::temp_directory_path() / "wam_test_run";
     fs::remove_all(workDir);
     fs::create_directories(workDir);
+    // Never the user's real config (it holds their API key) or state, and
+    // never the network: any request a test did not expect fails.
+    setenv("XDG_CONFIG_HOME", workDir.string().c_str(), 1);
+    setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
+    HttpClient::transportForTesting = [](const HttpRequest& r) {
+        return HttpResponse{0, "network is off in tests: " + r.method + " " + r.url};
+    };
 
     testExtractZip(workDir);
     testZipSlipRejected(workDir);
@@ -743,6 +809,9 @@ int main() {
     testTocReader(workDir);
     testReconciler(workDir);
     testReconcilerAdopt(workDir);
+    testConfigKeepsTheKeyPrivate(workDir);
+    testDamagedStateIsSetAside(workDir);
+    testHttpIsHttpsOnly();
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     fs::remove_all(workDir);

@@ -12,13 +12,20 @@
 #include "gui/flavors_model.hpp"
 #include "gui/format.hpp"
 #include "core/flavor_cache.hpp"
+#include "core/http_client.hpp"
+#include "core/state_store.hpp"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QDir>
+#include <QFileInfo>
+#include <zip.h>
 #include <iostream>
+#include <map>
+#include <mutex>
+#include <vector>
 
 using namespace wam;
 using namespace wam::gui;
@@ -374,12 +381,72 @@ void testInstalledAddonsModel() {
 
 // Spins the event loop until cond() holds or timeoutMs passes.
 template <typename F>
-bool waitFor(F cond, int timeoutMs = 5000) {
+bool waitFor(F cond, int timeoutMs = 2000) {
     QElapsedTimer t;
     t.start();
     while (!cond() && t.elapsed() < timeoutMs) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     return cond();
 }
+
+void writeText(const QString& path, const QByteArray& content) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    if (f.open(QIODevice::WriteOnly)) f.write(content);
+}
+
+QByteArray readText(const QString& path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+}
+
+// An addon zip with the given entries, as bytes. libzip reads the entry
+// buffers only at zip_close, so `contents` must outlive it (same scope).
+QByteArray zipBytes(const QString& path, const std::vector<std::pair<std::string, std::string>>& entries) {
+    int err = 0;
+    zip_t* z = zip_open(path.toUtf8().constData(), ZIP_CREATE | ZIP_TRUNCATE, &err);
+    if (!z) return {};
+    std::vector<std::string> contents;
+    for (const auto& e : entries) contents.push_back(e.second);
+    for (size_t i = 0; i < entries.size(); ++i)
+        zip_file_add(z, entries[i].first.c_str(), zip_source_buffer(z, contents[i].data(), contents[i].size(), 0),
+                     ZIP_FL_ENC_UTF_8);
+    zip_close(z);
+    return readText(path);
+}
+
+// Points the app at fresh config and data folders inside dir.
+void useFreshHome(const QTemporaryDir& dir) {
+    qputenv("XDG_CONFIG_HOME", (dir.path() + "/config").toUtf8());
+    qputenv("XDG_DATA_HOME", (dir.path() + "/data").toUtf8());
+}
+
+bool hasAddonFolder(const QString& wow, const char* folder) {
+    return QDir(wow + "/Interface/AddOns/" + folder).exists();
+}
+
+// Stands in for CurseForge and its CDN. Answers the requests a test scripted
+// by method and URL, records every request (the worker thread calls in), and
+// fails any request nobody scripted, so a test never needs the real API.
+struct FakeCurseForge {
+    std::mutex m;
+    std::map<std::string, HttpResponse> routes;
+    std::vector<HttpRequest> seen;
+    std::vector<std::string> unexpected;
+
+    void on(const std::string& method, const std::string& url, HttpResponse r) { routes[method + " " + url] = std::move(r); }
+    HttpResponse answer(const HttpRequest& r) {
+        std::lock_guard<std::mutex> lock(m);
+        seen.push_back(r);
+        auto it = routes.find(r.method + " " + r.url);
+        if (it == routes.end()) {
+            unexpected.push_back(r.method + " " + r.url);
+            return {404, R"({"error":"not scripted"})"};
+        }
+        return it->second;
+    }
+};
+
+const std::string kApi = "https://api.curseforge.com/v1";
 
 void testControllerEndToEnd() {
     QTemporaryDir tmp;
@@ -508,10 +575,134 @@ void testControllerEndToEnd() {
     check(true, "controller shuts its worker thread down cleanly");
 }
 
+void testManualReinstallReplacesOldFolders() {
+    // Offline, no API key: the path a user takes when the author blocks downloads.
+    QTemporaryDir tmp;
+    useFreshHome(tmp);
+    const QString wow = tmp.path() + "/wow";
+    writeText(tmp.path() + "/config/wow-addon-manager/config.json",
+              QString(R"({"wow_path":"%1"})").arg(wow).toUtf8());
+    QDir().mkpath(wow + "/Interface/AddOns");
+    const QString v1 = tmp.path() + "/v1.zip", v2 = tmp.path() + "/v2.zip";
+    zipBytes(v1, {{"Mine/Mine.toc", "## Title: Mine\n"}, {"MineExtra/MineExtra.toc", "## Title: Extra\n"}});
+    zipBytes(v2, {{"Mine/Mine.toc", "## Title: Mine v2\n"}});
+
+    WamController c;
+    c.installManual(60, 600, v1);
+    check(waitFor([&] { return c.installedAddons()->fileIdFor(60) == 600; }) &&
+          hasAddonFolder(wow, "Mine") && hasAddonFolder(wow, "MineExtra"),
+          "a manual install lays down every folder in the zip and is tracked");
+    c.installManual(60, 601, v2);
+    check(waitFor([&] { return c.installedAddons()->fileIdFor(60) == 601; }) &&
+          !hasAddonFolder(wow, "MineExtra") && readText(wow + "/Interface/AddOns/Mine/Mine.toc").contains("v2"),
+          "a manual reinstall replaces the old version, including a folder it no longer ships");
+    const auto rec = StateStore::load().find(60);
+    check(rec && rec->folders == std::vector<std::string>({"Mine"}) && rec->manuallyProvided,
+          "installed.json records only the new version's folders, as a manual file");
+}
+
+void testUpdatesWithFakeCurseForge() {
+    QTemporaryDir tmp;
+    useFreshHome(tmp);
+    const QString wow = tmp.path() + "/wow";
+    const QString addons = wow + "/Interface/AddOns";
+    writeText(tmp.path() + "/config/wow-addon-manager/config.json",
+              QString(R"({"curseforge_api_key":"test-key","wow_path":"%1","wow_flavor_id":517,"wow_flavor_name":"Retail"})")
+                  .arg(wow).toUtf8());
+    writeText(tmp.path() + "/data/wow-addon-manager/installed.json", R"({"addons":[
+        {"modId":42,"fileId":100,"displayName":"Foo","fileName":"foo-100.zip","channel":1,"folders":["Foo","FooOptions"],"flavorTypeId":517,"flavorName":"Retail"},
+        {"modId":43,"fileId":300,"displayName":"Bar","fileName":"bar-300.zip","channel":1,"folders":["Bar"],"flavorTypeId":517,"flavorName":"Retail"}]})");
+    writeText(addons + "/Foo/core.lua", "v1\n");
+    writeText(addons + "/FooOptions/options.lua", "options\n");
+    writeText(addons + "/Bar/bar.lua", "bar v1\n");
+
+    auto json = [](const std::string& body) { return HttpResponse{200, body}; };
+    FakeCurseForge fake;
+    fake.on("GET", kApi + "/games/1/version-types", json(R"({"data":[{"id":517,"name":"Retail","slug":"wow-retail"}]})"));
+    // Startup fills in icons, authors and file details for tracked addons.
+    fake.on("POST", kApi + "/mods", json(R"({"data":[{"id":42,"name":"Foo","slug":"foo"},{"id":43,"name":"Bar","slug":"bar"}]})"));
+    fake.on("POST", kApi + "/mods/files", json(R"({"data":[{"id":100,"modId":42,"fileName":"foo-100.zip"},{"id":300,"modId":43,"fileName":"bar-300.zip"}]})"));
+    fake.on("GET", kApi + "/mods/42", json(R"({"data":{"id":42,"name":"Foo","slug":"foo"}})"));
+    fake.on("GET", kApi + "/mods/43", json(R"({"data":{"id":43,"name":"Bar","slug":"bar"}})"));
+    fake.on("GET", kApi + "/mods/44", json(R"({"data":{"id":44,"name":"Baz","slug":"baz"}})"));
+    // The newest file overall is a beta: a release-channel addon must not be offered it.
+    fake.on("GET", kApi + "/mods/42/files?pageSize=50&index=0&gameVersionTypeId=517", json(R"({"data":[
+        {"id":100,"modId":42,"fileName":"foo-100.zip","releaseType":1,"downloadUrl":"u"},
+        {"id":102,"modId":42,"fileName":"foo-102.zip","releaseType":1,"downloadUrl":"u"},
+        {"id":103,"modId":42,"fileName":"foo-103-beta.zip","releaseType":2,"downloadUrl":"u"}]})"));
+    fake.on("GET", kApi + "/mods/43/files?pageSize=50&index=0&gameVersionTypeId=517", json(R"({"data":[
+        {"id":300,"modId":43,"fileName":"bar-300.zip","releaseType":1,"downloadUrl":"u"},
+        {"id":301,"modId":43,"fileName":"bar-301.zip","releaseType":1,"downloadUrl":"u"}]})"));
+    fake.on("GET", kApi + "/mods/42/files/102", json(R"({"data":{"id":102,"modId":42,"fileName":"foo-102.zip","releaseType":1,
+        "downloadUrl":"https://edge.forgecdn.net/files/1/102/foo-102.zip"}})"));
+    fake.on("GET", kApi + "/mods/43/files/301", json(R"({"data":{"id":301,"modId":43,"fileName":"bar-301.zip","releaseType":1,
+        "downloadUrl":"https://edge.forgecdn.net/files/1/301/bar-301.zip"}})"));
+    fake.on("GET", kApi + "/mods/44/files/440", json(R"({"data":{"id":440,"modId":44,"fileName":"baz-440.zip","releaseType":1,
+        "downloadUrl":null}})"));
+    fake.on("DOWNLOAD", "https://edge.forgecdn.net/files/1/102/foo-102.zip",
+            HttpResponse{200, zipBytes(tmp.path() + "/foo-102.zip", {{"Foo/core.lua", "v2\n"}}).toStdString()});
+    fake.on("DOWNLOAD", "https://edge.forgecdn.net/files/1/301/bar-301.zip", HttpResponse{500, ""});
+    HttpClient::transportForTesting = [&fake](const HttpRequest& r) { return fake.answer(r); };
+
+    {
+        WamController c;
+        int blocked = 0;
+        QObject::connect(&c, &WamController::downloadBlocked, [&] { ++blocked; });
+        check(waitFor([&] { return c.installedAddons()->rowCount() == 2; }), "test setup: two tracked addons load");
+
+        c.checkAllUpdates();
+        check(waitFor([&] { return !c.checkingUpdates(); }) && c.pendingUpdates()->count() == 2 &&
+              c.pendingUpdates()->find(42) && c.pendingUpdates()->find(42)->latestFileId == 102,
+              "an update check offers the newest file in the addon's channel and flavor, not a newer beta");
+
+        c.applyUpdate(42);
+        check(waitFor([&] { return c.installedAddons()->fileIdFor(42) == 102; }) &&
+              readText(addons + "/Foo/core.lua") == "v2\n" && !hasAddonFolder(wow, "FooOptions"),
+              "applying an update installs the new files and removes the folder the new version dropped");
+        const auto foo = StateStore::load().find(42);
+        check(foo && foo->fileId == 102 && foo->folders == std::vector<std::string>({"Foo"}) && !c.pendingUpdates()->find(42),
+              "the applied update is saved to installed.json and leaves the queue");
+
+        c.applyUpdate(43);
+        check(waitFor([&] { const auto* u = c.pendingUpdates()->find(43); return u && u->status == PendingUpdate::Status::Failed; }) &&
+              readText(addons + "/Bar/bar.lua") == "bar v1\n" && StateStore::load().find(43)->fileId == 300,
+              "a failed download leaves the installed addon and its record as they were");
+
+        // Blocked download, then the user supplies the zip: the flavor chosen at install is kept.
+        c.installFile(44, 440, 517);
+        check(waitFor([&] { return blocked == 1; }), "a file whose author blocks downloads is reported, not installed");
+        const QString baz = tmp.path() + "/baz.zip";
+        zipBytes(baz, {{"Baz/Baz.toc", "## Title: Baz\n"}});
+        c.installManual(44, 440, baz);
+        check(waitFor([&] { return c.installedAddons()->fileIdFor(44) == 440; }), "the manual zip installs");
+        const auto bazRec = StateStore::load().find(44);
+        check(bazRec && bazRec->flavorTypeId == 517 && bazRec->manuallyProvided && hasAddonFolder(wow, "Baz"),
+              "a manual install after a blocked download keeps the flavor picked for it");
+    } // joins the worker before the fake goes away
+
+    HttpClient::transportForTesting = [](const HttpRequest& r) { return HttpResponse{0, "network is off in tests: " + r.url}; };
+    bool keyOnlyToApi = !fake.seen.empty();
+    for (const auto& r : fake.seen) {
+        const bool api = r.url.rfind(kApi + "/", 0) == 0;
+        const bool sendsKey = std::find(r.headers.begin(), r.headers.end(), "x-api-key: test-key") != r.headers.end();
+        const bool mentionsKey = std::any_of(r.headers.begin(), r.headers.end(),
+                                             [](const std::string& h) { return h.find("test-key") != std::string::npos; });
+        if (api ? !sendsKey : mentionsKey) keyOnlyToApi = false;
+    }
+    check(keyOnlyToApi, "the API key goes with every CurseForge API request and never to the download host");
+    for (const auto& u : fake.unexpected) std::cerr << "unscripted request: " << u << "\n";
+    check(fake.unexpected.empty(), "the app made no request the fake CurseForge was not scripted for");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
+    // Never the user's real config (it holds their API key) or state, and
+    // never the network: any request a test did not script fails.
+    QTemporaryDir home;
+    useFreshHome(home);
+    HttpClient::transportForTesting = [](const HttpRequest& r) { return HttpResponse{0, "network is off in tests: " + r.url}; };
 
     testPendingUpdatesModel();
     testScanResultsModel();
@@ -526,6 +717,8 @@ int main(int argc, char** argv) {
     testSearchResultsModel();
     testInstalledAddonsModel();
     testControllerEndToEnd();
+    testManualReinstallReplacesOldFolders();
+    testUpdatesWithFakeCurseForge();
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;

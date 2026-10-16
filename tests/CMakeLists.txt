@@ -11,3 +11,8 @@ if(TARGET wam_gui)
     target_link_libraries(wam_gui_tests PRIVATE wam_gui)
     add_test(NAME wam_gui_tests COMMAND wam_gui_tests)
 endif()
+
+# Every suite finishes in well under a second; a hang (say, a worker thread
+# that never joins) should fail in seconds, not at ctest's 25 minute default.
+get_property(wam_tests_all DIRECTORY PROPERTY TESTS)
+set_tests_properties(${wam_tests_all} PROPERTIES TIMEOUT 30)

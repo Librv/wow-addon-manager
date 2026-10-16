@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Refuses a commit that would add your CurseForge API key anywhere in the
+# repo. The key is read from your own config.json and never printed.
+# Install once per clone: git config core.hooksPath tools/git-hooks
+set -euo pipefail
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/wow-addon-manager/config.json"
+[ -r "$config" ] || exit 0
+key=$(sed -n 's/.*"curseforge_api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$config" | head -n 1)
+[ -n "$key" ] || exit 0
+
+# Added lines only, in every staged file, binary ones included.
+hits=$(git diff --cached --text -U0 --diff-filter=ACMR | awk -v key="$key" '
+    /^\+\+\+ b\// { file = substr($0, 7); next }
+    /^\+/ && index($0, key) { print file }' | sort -u)
+
+if [ -n "$hits" ]; then
+    echo "pre-commit: your CurseForge API key is in the staged changes of:" >&2
+    echo "$hits" | sed 's/^/  /' >&2
+    echo "Remove it and stage again. Nothing was committed." >&2
+    exit 1
+fi

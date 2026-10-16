@@ -36,7 +36,7 @@ data/         .desktop file
 
 | File | Location | Holds |
 | --- | --- | --- |
-| `config.json` | `$XDG_CONFIG_HOME/wow-addon-manager/` | API key, `wow_path`, the folder's flavor (`wow_flavor_id`, `wow_flavor_name`) |
+| `config.json` | `$XDG_CONFIG_HOME/wow-addon-manager/` | API key, `wow_path`, the folder's flavor (`wow_flavor_id`, `wow_flavor_name`). Mode `0600`, folder `0700` (`docs/decisions/0007-keep-the-api-key-private.md`) |
 | `flavors.json` | next to `config.json` | CurseForge flavors keyed by CurseForge's key: `id`, user-editable `name`, original `api_name` |
 | `installed.json` | `$XDG_DATA_HOME/wow-addon-manager/` | one `InstalledAddon` per tracked addon (see `src/core/state_store.hpp`) |
 
@@ -44,6 +44,12 @@ Every field added later has an "unknown" default, so files from older
 versions load. Notable unknowns: `fileId == 0` (adopted, no file yet),
 `flavorTypeId == 0` (flavor unknown), empty `author` / `iconUrl` /
 `fileDate` (backfilled by the GUI at startup when there is an API key).
+
+`config.json` and `installed.json` are written atomically (`writeFileAtomic`:
+temp file, sync, rename), so a crash leaves the old file or the new one. An
+`installed.json` that still cannot be read is moved aside as
+`installed.json.damaged-<time>` and the list starts empty; the CLI warns and
+the GUI reports it, so the next save cannot overwrite what the old file held.
 
 ## Flavors
 

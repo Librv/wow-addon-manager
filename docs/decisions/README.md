@@ -28,3 +28,5 @@ What this costs, and what to keep in mind when changing nearby code.
 | 0003 | [Identify existing addons by `.toc` project id](0003-adopt-by-toc-project-id.md) |
 | 0004 | [One worker thread owns the core in the GUI](0004-single-worker-thread.md) |
 | 0005 | [Hand-rolled test harness](0005-hand-rolled-tests.md) |
+| 0006 | [Tests answer HTTP themselves](0006-fake-http-in-tests.md) |
+| 0007 | [Keep the API key private](0007-keep-the-api-key-private.md) |

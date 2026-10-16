@@ -22,6 +22,7 @@ other.
 ## Build and test
 
 ```sh
+git config core.hooksPath tools/git-hooks   # once: refuses commits containing your API key
 cmake -S . -B build                 # add -DWAM_BUILD_GUI=OFF for core + CLI only
 cmake --build build -j
 ctest --test-dir build --output-on-failure
@@ -86,6 +87,11 @@ These always apply.
     app unless nothing else works. Wait on a condition instead (poll with a
     short bound, like `waitFor` in the GUI tests). If a sleep is unavoidable,
     keep it to a few seconds.
+11. **The API key stays private.** It lives only in `config.json` (mode
+    `0600`) and travels only as `x-api-key` to `api.curseforge.com`, over
+    HTTPS, with no redirects. Never log it, print it, put it in a URL or a
+    download request, or commit it. Tests never use a real key or the real
+    API. See `docs/decisions/0007-keep-the-api-key-private.md`.
 
 ## Writing style
 

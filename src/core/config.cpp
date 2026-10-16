@@ -1,4 +1,5 @@
 #include "core/config.hpp"
+#include "core/atomic_file.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <cstdlib>
@@ -8,6 +9,20 @@ namespace wam {
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+// config.json holds the CurseForge API key: only its owner may read it, or
+// the folder it sits in.
+constexpr auto kPrivateFile = fs::perms::owner_read | fs::perms::owner_write;
+constexpr auto kPrivateDir = fs::perms::owner_all;
+
+// Takes group and other access away from a file or folder that has any.
+// Fixes configs written before the key was protected. Best effort.
+static void makePrivate(const fs::path& p, fs::perms keep) {
+    std::error_code ec;
+    const auto now = fs::status(p, ec).permissions();
+    if (!ec && (now & (fs::perms::group_all | fs::perms::others_all)) != fs::perms::none)
+        fs::permissions(p, now & keep, ec);
+}
 
 static fs::path homeDir() {
     if (const char* h = std::getenv("HOME")) return fs::path(h);
@@ -32,6 +47,8 @@ Config Config::load() {
     Config cfg;
     auto path = configPath();
     if (!fs::exists(path)) return cfg; // no config yet: everything optional, still usable
+    makePrivate(path.parent_path(), kPrivateDir);
+    makePrivate(path, kPrivateFile);
 
     std::ifstream in(path);
     json j;
@@ -52,6 +69,7 @@ Config Config::load() {
 void Config::save() const {
     auto path = configPath();
     fs::create_directories(path.parent_path());
+    makePrivate(path.parent_path(), kPrivateDir);
 
     json j;
     j["curseforge_api_key"] = curseforge_api_key.has_value() ? json(*curseforge_api_key) : json(nullptr);
@@ -59,8 +77,7 @@ void Config::save() const {
     j["wow_flavor_id"] = wow_flavor_id.has_value() ? json(*wow_flavor_id) : json(nullptr);
     j["wow_flavor_name"] = wow_flavor_name.has_value() ? json(*wow_flavor_name) : json(nullptr);
 
-    std::ofstream out(path);
-    out << j.dump(2) << "\n";
+    writeFileAtomic(path, j.dump(2) + "\n", kPrivateFile);
 }
 
 std::string Config::wowFolderName() const {

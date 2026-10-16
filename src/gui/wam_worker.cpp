@@ -88,10 +88,10 @@ void WamWorker::detectFlavor() {
 void WamWorker::initialize() {
     try {
         config_ = Config::load();
-        state_ = StateStore::load();
     } catch (const std::exception& e) {
         emit errorOccurred("initialize", QString::fromStdString(e.what()));
     }
+    loadState();
     if (config_.curseforge_api_key.has_value())
         client_.emplace(*config_.curseforge_api_key);
 
@@ -665,8 +665,21 @@ void WamWorker::loadChangelog(qint64 modId, qint64 fileId) {
     }
 }
 
+void WamWorker::loadState() {
+    try {
+        state_ = StateStore::load();
+    } catch (const std::exception& e) {
+        emit errorOccurred("initialize", QString::fromStdString(e.what()));
+        return;
+    }
+    if (!state_.damagedFile().empty())
+        emit errorOccurred("initialize", "The list of installed addons could not be read, so it starts empty. "
+                                         "The old file was kept as " + QString::fromStdString(state_.damagedFile().string()) +
+                                         ". Scan your AddOns folder to find your addons again.");
+}
+
 void WamWorker::refreshAddonList() {
-    state_ = StateStore::load();
+    loadState();
     emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
 }
 

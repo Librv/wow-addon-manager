@@ -25,9 +25,17 @@ curl_slist* buildHeaders(const std::vector<std::string>& headers) {
     return list;
 }
 
+// HTTPS only, so a key or a download never travels in the clear, even if a
+// URL or a redirect asks for http.
+void restrictToHttps(CURL* curl) {
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+}
+
 } // namespace
 
 HttpResponse HttpClient::get(const std::string& url, const std::vector<std::string>& headers) {
+    if (transportForTesting) return transportForTesting({"GET", url, headers, {}});
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("failed to init curl handle");
 
@@ -38,7 +46,7 @@ HttpResponse HttpClient::get(const std::string& url, const std::vector<std::stri
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    restrictToHttps(curl);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "wow-addon-manager/0.1");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
@@ -59,6 +67,7 @@ HttpResponse HttpClient::get(const std::string& url, const std::vector<std::stri
 
 HttpResponse HttpClient::post(const std::string& url, const std::string& body,
                                const std::vector<std::string>& headers) {
+    if (transportForTesting) return transportForTesting({"POST", url, headers, body});
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("failed to init curl handle");
 
@@ -72,7 +81,7 @@ HttpResponse HttpClient::post(const std::string& url, const std::string& body,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    restrictToHttps(curl);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "wow-addon-manager/0.1");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
@@ -94,6 +103,14 @@ HttpResponse HttpClient::post(const std::string& url, const std::string& body,
 HttpResponse HttpClient::downloadToFile(const std::string& url,
                                          const std::filesystem::path& destPath,
                                          const std::vector<std::string>& headers) {
+    if (transportForTesting) {
+        auto resp = transportForTesting({"DOWNLOAD", url, headers, {}});
+        if (resp.ok()) {
+            std::filesystem::create_directories(destPath.parent_path());
+            std::ofstream(destPath, std::ios::binary) << resp.body;
+        }
+        return resp;
+    }
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("failed to init curl handle");
 
@@ -108,6 +125,7 @@ HttpResponse HttpClient::downloadToFile(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToStream);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    restrictToHttps(curl);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "wow-addon-manager/0.1");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
 

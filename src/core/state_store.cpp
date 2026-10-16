@@ -1,5 +1,6 @@
 #include "core/state_store.hpp"
 #include "core/config.hpp"
+#include "core/atomic_file.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <algorithm>
@@ -87,10 +88,21 @@ StateStore StateStore::load() {
     store.path_ = Config::dataDir() / "installed.json";
     if (!fs::exists(store.path_)) return store;
 
-    std::ifstream in(store.path_);
-    json j;
-    in >> j;
-    for (const auto& item : j.at("addons")) store.addons_.push_back(fromJson(item));
+    try {
+        std::ifstream in(store.path_);
+        json j;
+        in >> j;
+        for (const auto& item : j.at("addons")) store.addons_.push_back(fromJson(item));
+    } catch (const json::exception&) {
+        // Keep the bytes for the user to recover; colons kept out of the name
+        // so the file is easy to handle on any filesystem.
+        auto stamp = nowIso8601();
+        std::replace(stamp.begin(), stamp.end(), ':', '-');
+        store.damagedFile_ = store.path_;
+        store.damagedFile_ += ".damaged-" + stamp;
+        fs::rename(store.path_, store.damagedFile_);
+        store.addons_.clear();
+    }
     return store;
 }
 
@@ -102,8 +114,8 @@ void StateStore::save() const {
     json root;
     root["addons"] = arr;
 
-    std::ofstream out(path_);
-    out << root.dump(2) << "\n";
+    writeFileAtomic(path_, root.dump(2) + "\n",
+                    fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read);
 }
 
 void StateStore::upsert(const InstalledAddon& addon) {
