@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <unordered_set>
 #include <cstdlib>
+#include <termios.h>
+#include <unistd.h>
 
 using namespace wam;
 
@@ -23,7 +25,7 @@ void printUsage() {
     std::cout <<
         "wam - WoW addon manager core CLI\n\n"
         "Config:\n"
-        "  wam config set-key <api_key>\n"
+        "  wam config set-key                (reads the key from stdin, so it stays out of shell history)\n"
         "  wam config set-path <wow_install_dir>\n"
         "  wam config show\n\n"
         "CurseForge:\n"
@@ -64,10 +66,41 @@ std::string channelName(ReleaseChannel c) {
     return "unknown";
 }
 
+// Reads one line from stdin, without echo when it is a terminal.
+std::string readSecretLine(const char* prompt) {
+    const bool tty = ::isatty(STDIN_FILENO);
+    termios old{};
+    if (tty) {
+        std::cerr << prompt << std::flush;
+        ::tcgetattr(STDIN_FILENO, &old);
+        termios quiet = old;
+        quiet.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+        ::tcsetattr(STDIN_FILENO, TCSANOW, &quiet);
+    }
+    std::string line;
+    std::getline(std::cin, line);
+    if (tty) {
+        ::tcsetattr(STDIN_FILENO, TCSANOW, &old);
+        std::cerr << "\n";
+    }
+    const auto first = line.find_first_not_of(" \t\r\n");
+    const auto last = line.find_last_not_of(" \t\r\n");
+    return first == std::string::npos ? std::string() : line.substr(first, last - first + 1);
+}
+
+// installed.json, telling the user if it was damaged and moved aside.
+StateStore loadState() {
+    auto store = StateStore::load();
+    if (!store.damagedFile().empty())
+        std::cerr << "warning: installed.json could not be read and was moved to " << store.damagedFile()
+                  << "; starting with an empty list (run `wam scan` to find your addons again)\n";
+    return store;
+}
+
 CurseForgeClient requireClient() {
     auto cfg = Config::load();
     if (!cfg.curseforge_api_key.has_value())
-        throw std::runtime_error("no CurseForge API key configured, run: wam config set-key <key>");
+        throw std::runtime_error("no CurseForge API key configured, run: wam config set-key");
     return CurseForgeClient(*cfg.curseforge_api_key);
 }
 
@@ -114,7 +147,7 @@ std::string joinFolders(const std::vector<std::string>& folders) {
 
 // Records the install in state and prints a verification summary.
 void recordAndReport(const InstalledAddon& addon) {
-    auto store = StateStore::load();
+    auto store = loadState();
     store.upsert(addon);
     store.save();
 
@@ -131,8 +164,17 @@ int cmdConfig(int argc, char** argv) {
     std::string sub = argv[0];
     auto cfg = Config::load();
 
-    if (sub == "set-key" && argc >= 2) {
-        cfg.curseforge_api_key = argv[1];
+    if (sub == "set-key") {
+        if (argc >= 2) {
+            // Still accepted, but the key is now in the shell's history file.
+            cfg.curseforge_api_key = argv[1];
+            std::cerr << "note: a key on the command line is saved in your shell history; "
+                         "next time run `wam config set-key` and paste it instead\n";
+        } else {
+            auto key = readSecretLine("CurseForge API key: ");
+            if (key.empty()) { std::cerr << "no key given, nothing saved\n"; return 1; }
+            cfg.curseforge_api_key = key;
+        }
         cfg.save();
         std::cout << "CurseForge API key saved to " << Config::configPath() << "\n";
         return 0;
@@ -258,7 +300,7 @@ int cmdInstall(int argc, char** argv) {
     }
 
     // Reinstalling an already-tracked mod replaces its old folders atomically.
-    auto store = StateStore::load();
+    auto store = loadState();
     auto existing = store.find(modId);
     auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir,
                                               existing ? existing->folders : std::vector<std::string>{});
@@ -296,7 +338,7 @@ int cmdInstallManual(int argc, char** argv) {
         return 1;
     }
 
-    auto store = StateStore::load();
+    auto store = loadState();
     auto existing = store.find(modId);
 
     std::string displayName = existing ? existing->displayName : "mod " + std::to_string(modId);
@@ -361,7 +403,7 @@ int cmdInstallManual(int argc, char** argv) {
 // can keep going past one bad mod.
 int updateOneMod(int64_t modId, const std::optional<std::string>& flavor,
                   std::optional<ReleaseChannel> channelOverride, bool assumeYes) {
-    auto store = StateStore::load();
+    auto store = loadState();
     auto existing = store.find(modId);
     if (!existing.has_value()) {
         std::cerr << "Mod " << modId << " is not tracked. Run 'wam install " << modId << "' first.\n";
@@ -481,7 +523,7 @@ int cmdUpdateAll(int argc, char** argv) {
         else if (a == "--yes" || a == "-y") assumeYes = true;
     }
 
-    auto store = StateStore::load();
+    auto store = loadState();
     int failures = 0;
     for (const auto& addon : store.all()) {
         if (addon.modId == 0) continue; // not CurseForge-sourced (reserved for future sources)
@@ -492,7 +534,7 @@ int cmdUpdateAll(int argc, char** argv) {
 }
 
 int cmdList(int, char**) {
-    auto store = StateStore::load();
+    auto store = loadState();
     std::cout << store.all().size() << " addon(s) tracked:\n";
     for (const auto& a : store.all()) {
         std::cout << "  [" << a.modId << "] " << a.displayName
@@ -509,7 +551,7 @@ int cmdRemove(int argc, char** argv) {
     if (argc < 1) { printUsage(); return 1; }
     int64_t modId = std::stoll(argv[0]);
 
-    auto store = StateStore::load();
+    auto store = loadState();
     auto found = store.find(modId);
     if (!found.has_value()) {
         std::cerr << "No tracked addon with mod id " << modId << "\n";
@@ -529,7 +571,7 @@ int cmdUntrack(int argc, char** argv) {
     if (argc < 1) { printUsage(); return 1; }
     int64_t modId = std::stoll(argv[0]);
 
-    auto store = StateStore::load();
+    auto store = loadState();
     auto found = store.find(modId);
     if (!found.has_value()) {
         std::cerr << "No tracked addon with mod id " << modId << "\n";
@@ -551,7 +593,7 @@ int cmdSetFlavor(int argc, char** argv) {
     if (argc < 2) { printUsage(); return 1; }
     int64_t modId = std::stoll(argv[0]);
 
-    auto store = StateStore::load();
+    auto store = loadState();
     auto existing = store.find(modId);
     if (!existing.has_value()) {
         std::cerr << "No tracked addon with mod id " << modId << "\n";
@@ -573,7 +615,7 @@ int cmdSetFlavor(int argc, char** argv) {
 
 int cmdScan(int, char**) {
     auto addonsDir = requireAddonsDir();
-    auto store = StateStore::load();
+    auto store = loadState();
     auto entries = Reconciler::scan(addonsDir, store);
 
     if (entries.empty()) {
@@ -619,7 +661,7 @@ int cmdAdopt(int argc, char** argv) {
     }
 
     auto addonsDir = requireAddonsDir();
-    auto store = StateStore::load();
+    auto store = loadState();
     std::vector<std::string> foldersToAdopt;
 
     if (folder.has_value()) {

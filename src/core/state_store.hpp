@@ -43,8 +43,14 @@ void recordFile(InstalledAddon& addon, const CurseForgeFile& file);
 // itself. Reconciliation with what's actually on disk is milestone 2.
 class StateStore {
 public:
+    // A file that cannot be read is moved aside (see damagedFile) and the
+    // store starts empty, so the next save cannot overwrite what it held.
     static StateStore load();
-    void save() const;
+    void save() const; // atomic: a crash leaves the old file or the new one
+
+    // Where an unreadable installed.json was moved by load(); empty if it
+    // loaded fine. Callers tell the user, since the list now starts empty.
+    const std::filesystem::path& damagedFile() const { return damagedFile_; }
 
     void upsert(const InstalledAddon& addon); // keyed by modId
     bool remove(int64_t modId);               // returns true if something was removed
@@ -54,6 +60,7 @@ public:
 private:
     std::vector<InstalledAddon> addons_;
     std::filesystem::path path_;
+    std::filesystem::path damagedFile_;
 };
 
 } // namespace wam

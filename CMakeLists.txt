@@ -18,6 +18,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 
 add_library(wam_core
+    src/core/atomic_file.cpp
     src/core/config.cpp
     src/core/http_client.cpp
     src/core/curseforge_client.cpp

@@ -73,6 +73,8 @@ void testMigration(const fs::path& dir) {
 int main() {
     auto dir = fs::temp_directory_path() / "wam_flavor_names_test";
     fs::remove_all(dir);
+    setenv("XDG_CONFIG_HOME", dir.string().c_str(), 1); // never the user's real config
+    setenv("XDG_DATA_HOME", dir.string().c_str(), 1);
     testDefaultName();
     testMerge();
     testMigration(dir);

@@ -60,13 +60,18 @@ cmake --install build --prefix ~/.local
 Either use the GUI's Settings page, or:
 
 ```sh
-./build/wam config set-key <your-curseforge-api-key>
+./build/wam config set-key        # paste the key when asked; it is not shown
 ./build/wam config set-path /path/to/WoW/_retail_
 ./build/wam config show
 ```
 
+`set-key` reads the key from stdin so it stays out of your shell history
+(`wam config set-key <key>` still works but leaves it there).
+
 Config lives at `$XDG_CONFIG_HOME/wow-addon-manager/config.json`
-(`~/.config/wow-addon-manager/config.json` by default). Both the key and the
+(`~/.config/wow-addon-manager/config.json` by default), readable only by you:
+wam writes it with mode `0600` and tightens an older, looser one when it
+loads it. Both the key and the
 path are optional: local-only operations (`list`, `remove`,
 `install-manual`, `scan`, `adopt`) work with no key, though anything
 touching the AddOns folder still needs `wow_path`.
@@ -379,3 +384,10 @@ Known limitations:
 Developer documentation lives in `AGENTS.md` (rules for people and AI agents
 alike) and `docs/`: architecture, GUI development and live QML reload,
 CurseForge API notes, testing, gotchas and design decisions.
+
+Once per clone, turn on the commit check that refuses any commit containing
+your CurseForge API key:
+
+```sh
+git config core.hooksPath tools/git-hooks
+```
