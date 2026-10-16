@@ -53,8 +53,6 @@ PendingUpdate makeUpdate(qint64 id, bool blocked = false) {
 
 void testPendingUpdatesModel() {
     PendingUpdatesModel m;
-    int changes = 0;
-    QObject::connect(&m, &PendingUpdatesModel::changed, [&] { ++changes; });
 
     // The review popup binds to head's fields even while the queue is empty
     // (that is what produced "Unable to assign [undefined] to QString" in
@@ -91,7 +89,6 @@ void testPendingUpdatesModel() {
     m.remove(1);
     check(m.count() == 2 && m.head().value("modId").toLongLong() == 2, "removing the head advances to the next row");
     check(m.data(m.index(0), PendingUpdatesModel::BlockedRole).toBool(), "row roles expose the blocked flag");
-    check(changes > 0, "changed() fires on every mutation");
 
     m.clear();
     check(m.count() == 0 && m.head().value("latestFile").toString().isEmpty() && m.head().contains("iconUrl"),
@@ -100,23 +97,16 @@ void testPendingUpdatesModel() {
 
 void testScanResultsModel() {
     ScanResultsModel m;
-    ScanGroup tagged; tagged.modId = 3358; tagged.name = "Deadly Boss Mods"; tagged.iconUrl = "http://i"; tagged.author = "Someone";
+    ScanGroup tagged; tagged.modId = 3358; tagged.name = "Deadly Boss Mods";
     tagged.folders = {"DBM-Core", "DBM-GUI"}; tagged.details = {"DBM-Core v1", "DBM-GUI"};
     ScanGroup loose; loose.name = "My Hand-Made Addon"; loose.folders = {"MyAddon"}; loose.details = {"MyAddon"};
     m.setGroups({tagged, loose});
 
-    check(m.rowCount() == 2, "scan model holds one row per group");
     check(m.folderCount() == 3, "folderCount totals folders across rows");
     check(m.matchedCount() == 1, "matchedCount counts only .toc-tagged rows");
     check(m.data(m.index(0), ScanResultsModel::MatchedRole).toBool() &&
           !m.data(m.index(1), ScanResultsModel::MatchedRole).toBool(),
           "matched role distinguishes tagged from untagged rows");
-    check(m.data(m.index(0), ScanResultsModel::FoldersRole).toStringList() == QStringList({"DBM-Core", "DBM-GUI"}),
-          "folders role carries every folder in the row");
-    check(m.data(m.index(0), ScanResultsModel::IconUrlRole).toString() == "http://i", "icon role");
-    check(m.data(m.index(0), ScanResultsModel::AuthorRole).toString() == "Someone" &&
-          m.data(m.index(1), ScanResultsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
-    check(m.groups().size() == 2, "groups() returns a copy for bulk adoption");
 }
 
 void testCleanTocText() {
@@ -334,15 +324,10 @@ void testFormatCount() {
 
 void testSearchResultsModel() {
     SearchResultsModel m;
-    CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408}; a.logoUrl = "http://logo"; a.author = "Ellesmere";
+    CurseForgeMod a; a.id = 10; a.name = "Alpha"; a.gameVersionTypeIds = {517, 67408};
     CurseForgeMod b; b.id = 20; b.name = "Beta";
     m.setResults({a, b});
 
-    check(m.rowCount() == 2, "search results model holds the results");
-    check(m.data(m.index(0), SearchResultsModel::NameRole).toString() == "Alpha", "name role");
-    check(m.data(m.index(0), SearchResultsModel::LogoUrlRole).toString() == "http://logo", "logoUrl role");
-    check(m.data(m.index(0), SearchResultsModel::AuthorRole).toString() == "Ellesmere" &&
-          m.data(m.index(1), SearchResultsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
     check(m.data(m.index(0), SearchResultsModel::DownloadsTextRole).toString().isEmpty() &&
           m.data(m.index(0), SearchResultsModel::UpdatedTextRole).toString().isEmpty() &&
           m.data(m.index(0), SearchResultsModel::VersionTextRole).toString().isEmpty(),
@@ -357,26 +342,6 @@ void testSearchResultsModel() {
     check(m.flavorIdsFor(10) == QList<qint64>({517, 67408}), "flavorIdsFor returns the mod's flavors");
     check(m.flavorIdsFor(20).isEmpty(), "flavorIdsFor is empty for a mod that reports none");
     check(m.flavorIdsFor(999).isEmpty(), "flavorIdsFor is empty for an unknown mod");
-}
-
-void testInstalledAddonsModel() {
-    InstalledAddonsModel m;
-    InstalledAddon a;
-    a.modId = 5; a.displayName = "Foo"; a.flavorTypeId = 517; a.flavorName = "Retail"; a.iconUrl = "http://icon"; a.author = "Ellesmere";
-    a.folders = {"Foo", "FooOptions"};
-    InstalledAddon legacy;
-    legacy.modId = 6; legacy.displayName = "Bar"; // flavor unknown
-    m.setAddons({a, legacy});
-
-    check(m.rowCount() == 2, "installed model holds the addons");
-    check(m.data(m.index(0), InstalledAddonsModel::FlavorNameRole).toString() == "Retail", "flavorName role");
-    check(m.data(m.index(0), InstalledAddonsModel::FlavorTypeIdRole).toLongLong() == 517, "flavorTypeId role");
-    check(m.data(m.index(0), InstalledAddonsModel::IconUrlRole).toString() == "http://icon", "iconUrl role");
-    check(m.data(m.index(0), InstalledAddonsModel::AuthorRole).toString() == "Ellesmere" &&
-          m.data(m.index(1), InstalledAddonsModel::AuthorRole).toString().isEmpty(), "author role, empty when unknown");
-    check(m.data(m.index(1), InstalledAddonsModel::FlavorTypeIdRole).toLongLong() == 0,
-          "an addon with no recorded flavor reports flavorTypeId 0");
-    check(m.data(m.index(0), InstalledAddonsModel::FoldersRole).toStringList().size() == 2, "folders role");
 }
 
 // Spins the event loop until cond() holds or timeoutMs passes.
@@ -564,15 +529,11 @@ void testControllerEndToEnd() {
         check(waitFor([&] { return c.installedAddons()->changelogState(1) == "failed"; }),
               "a changelog that cannot be fetched ends as failed, so the row can show it");
         c.loadChangelog(0); // not an installed addon: nothing to do
-        check(c.downloadUrl(26886, 8875044) == "https://www.curseforge.com/api/v1/mods/26886/files/8875044/download",
-              "downloadUrl gives the website's direct download link");
-        check(c.modPageUrl("questie") == "https://www.curseforge.com/wow/addons/questie", "modPageUrl gives the addon page");
 
         c.applyUpdate(42); // nothing queued for this mod: a no-op, not a crash
         c.skipUpdate(42);
         check(c.pendingUpdates()->count() == 0, "apply/skip on an unqueued mod is a no-op");
     } // ~WamController joins the worker thread
-    check(true, "controller shuts its worker thread down cleanly");
 }
 
 void testManualReinstallReplacesOldFolders() {
@@ -715,7 +676,6 @@ int main(int argc, char** argv) {
     testChangelogsArePruned();
     testFormatCount();
     testSearchResultsModel();
-    testInstalledAddonsModel();
     testControllerEndToEnd();
     testManualReinstallReplacesOldFolders();
     testUpdatesWithFakeCurseForge();

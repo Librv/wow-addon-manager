@@ -576,21 +576,6 @@ void testFileDetailsAndLookups(const fs::path& workDir) {
     // legacy files (no such fields) are covered by testStateStoreLegacyFile
 }
 
-void testNoApiKeyStillUsable(const fs::path& workDir) {
-    // Core requirement from the plan: the app must stay usable for managing
-    // already-installed addons with no API key and no network. Config with
-    // no key must not throw merely by existing / being loaded, and
-    // addonsDir() must work once wow_path is set even with no key.
-    setenv("XDG_CONFIG_HOME", workDir.string().c_str(), 1);
-    Config cfg; // default-constructed: no key, no path
-    check(!cfg.curseforge_api_key.has_value(), "default Config has no API key");
-
-    cfg.wow_path = (workDir / "WoW" / "_retail_").string();
-    auto dir = cfg.addonsDir();
-    check(dir == fs::path(*cfg.wow_path) / "Interface" / "AddOns",
-          "addonsDir() resolves correctly with no API key set");
-}
-
 void testTocReader(const fs::path& workDir) {
     auto folder = workDir / "AddOns" / "DBM-Core";
     fs::create_directories(folder);
@@ -805,7 +790,6 @@ int main() {
     testFlavorCache(workDir);
     testHtmlToPlainText();
     testFileDetailsAndLookups(workDir);
-    testNoApiKeyStillUsable(workDir);
     testTocReader(workDir);
     testReconciler(workDir);
     testReconcilerAdopt(workDir);

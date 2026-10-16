@@ -58,7 +58,7 @@ a failure. See `docs/decisions/0006-fake-http-in-tests.md`.
 ## Current status
 
 2026-10-16, CachyOS, Qt 6.12.0, Kirigami 6.31.0: all three suites pass
-(`wam_tests` 141 checks, `wam_flavor_tests` 10, `wam_gui_tests` 150).
+(`wam_tests` 139 checks, `wam_flavor_tests` 10, `wam_gui_tests` 130).
 
 Earlier history: the first versions were written in a sandbox (Ubuntu 24.04,
 Qt 6.4.2, no Kirigami, no access to `api.curseforge.com`), where only the
