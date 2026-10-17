@@ -352,7 +352,8 @@ void AddonLibrary::snapshot(const fs::path& addonsDir, const std::vector<std::st
                 if (zip_dir_add(z, (name + "/").c_str(), ZIP_FL_ENC_UTF_8) < 0) fail(zip_strerror(z));
             } else if (it->is_regular_file()) {
                 // Read lazily at zip_close, while the folder is still in place.
-                zip_source_t* src = zip_source_file(z, it->path().c_str(), 0, ZIP_LENGTH_TO_END);
+                // -1 is "to the end of the file"; ZIP_LENGTH_TO_END only exists from libzip 1.10.1 (Ubuntu 24.04 has older).
+                zip_source_t* src = zip_source_file(z, it->path().c_str(), 0, -1);
                 if (!src) fail(zip_strerror(z));
                 if (zip_file_add(z, name.c_str(), src, ZIP_FL_ENC_UTF_8) < 0) {
                     zip_source_free(src);
