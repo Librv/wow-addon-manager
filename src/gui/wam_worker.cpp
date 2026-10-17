@@ -198,8 +198,16 @@ void WamWorker::initialize() {
 }
 
 void WamWorker::setApiKey(const QString& key) {
-    config_.curseforge_api_key = key.toStdString();
-    config_.save();
+    // Changes go to a copy, kept only once saved: memory never holds what disk does not.
+    Config next = config_;
+    next.curseforge_api_key = key.toStdString();
+    try {
+        next.save();
+        config_ = std::move(next);
+    } catch (const std::exception& e) {
+        emit errorOccurred("setApiKey", QString::fromStdString(e.what()));
+        return;
+    }
     client_.emplace(*config_.curseforge_api_key);
     emitConfig();
     refreshFlavors();
@@ -323,11 +331,18 @@ void WamWorker::search(const QString& query) {
 }
 
 void WamWorker::renameFlavor(const QString& slug, const QString& name) {
-    if (!flavors_.rename(slug.toStdString(), name.trimmed().toStdString())) {
+    FlavorCache next = flavors_;
+    if (!next.rename(slug.toStdString(), name.trimmed().toStdString())) {
         emit errorOccurred("renameFlavor", "Unknown flavor '" + slug + "'.");
         return;
     }
-    flavors_.save();
+    try {
+        next.save();
+        flavors_ = std::move(next);
+    } catch (const std::exception& e) {
+        emit errorOccurred("renameFlavor", QString::fromStdString(e.what()));
+        return;
+    }
     // Each profile stores its folder's flavor with its display name.
     bool changed = false;
     for (const auto& p : std::vector<Profile>(profiles_.all())) {
@@ -623,8 +638,15 @@ void WamWorker::setFlavor(qint64 modId, qint64 flavorTypeId) {
     InstalledAddon rec = *existing;
     rec.flavorTypeId = flavorTypeId;
     rec.flavorName = flavors_.nameFor(flavorTypeId);
-    state_.upsert(rec);
-    state_.save();
+    StateStore next = state_;
+    next.upsert(rec);
+    try {
+        next.save();
+        state_ = std::move(next);
+    } catch (const std::exception& e) {
+        emit errorOccurred("setFlavor", QString::fromStdString(e.what()));
+        return;
+    }
     emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
 }
 
@@ -813,7 +835,11 @@ void WamWorker::backfillDetails() {
     } catch (const std::exception&) {}
 
     if (changed) {
-        state_.save();
+        try {
+            state_.save();
+        } catch (const std::exception& e) {
+            emit errorOccurred("backfillDetails", QString::fromStdString(e.what()));
+        }
         emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
     }
 }
@@ -914,8 +940,15 @@ void WamWorker::untrackAddon(qint64 modId) {
         emit errorOccurred("untrackAddon", "No tracked addon with mod id " + QString::number(modId));
         return;
     }
-    state_.remove(modId);
-    state_.save();
+    StateStore next = state_;
+    next.remove(modId);
+    try {
+        next.save();
+        state_ = std::move(next);
+    } catch (const std::exception& e) {
+        emit errorOccurred("untrackAddon", QString::fromStdString(e.what()));
+        return;
+    }
     collectGarbage();
     emit addonUntracked(modId);
     emitAddons();

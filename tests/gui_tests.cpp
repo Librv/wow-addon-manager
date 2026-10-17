@@ -23,7 +23,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <zip.h>
+#include <filesystem>
 #include <iostream>
+#include <unistd.h>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -577,6 +579,27 @@ void testControllerEndToEnd() {
         check(waitFor([&] { return c.installedAddons()->changelogState(1) == "failed"; }),
               "a changelog that cannot be fetched ends as failed, so the row can show it");
         c.loadChangelog(0); // not an installed addon: nothing to do
+
+        // A state file that cannot be saved is reported, not an abort of the whole app.
+        auto setDataWritable = [&](bool on) {
+            const std::filesystem::path data = (tmp.path() + "/data").toStdString();
+            const auto opt = on ? std::filesystem::perm_options::add : std::filesystem::perm_options::remove;
+            std::filesystem::permissions(data, std::filesystem::perms::owner_write, opt);
+            for (const auto& e : std::filesystem::recursive_directory_iterator(data))
+                if (e.is_directory()) std::filesystem::permissions(e.path(), std::filesystem::perms::owner_write, opt);
+        };
+        if (::geteuid() != 0) { // root ignores the read-only folders (the Arch CI container)
+            setDataWritable(false);
+            errContext.clear();
+            c.untrackAddon(555);
+            check(waitFor([&] { return errContext == "untrackAddon"; }), "a failed save reports an error instead of aborting");
+            setDataWritable(true);
+            c.setFlavor(42, 517); // a later save must not write the untrack that failed
+            errContext.clear();
+            c.search("x"); // fails without a key; requests run in order, so setFlavor is done by then
+            check(waitFor([&] { return errContext == "search"; }) && c.installedAddons()->rowCount() == 3,
+                  "a failed untrack stays undone after a later save");
+        }
 
         c.applyUpdate(42); // nothing queued for this mod: a no-op, not a crash
         c.skipUpdate(42);
