@@ -6,6 +6,7 @@
 #include "core/html_text.hpp"
 #include "gui/toc_text.hpp"
 #include <QList>
+#include <QVariantMap>
 #include <algorithm>
 #include <filesystem>
 #include <map>
@@ -33,6 +34,9 @@ std::optional<int64_t> optId(qint64 id) {
     return id != 0 ? std::optional<int64_t>(id) : std::nullopt;
 }
 
+const char* kInactiveNote = "This profile is not active, so the WoW folder holds another profile's addons. "
+                            "Set it as the active profile first.";
+
 } // namespace
 
 WamWorker::WamWorker(QObject* parent) : QObject(parent) {}
@@ -45,12 +49,60 @@ CurseForgeClient* WamWorker::requireClient(const char* context) {
     return &*client_;
 }
 
+const Profile* WamWorker::selectedProfile() const {
+    return profiles_.find(profiles_.selectedId());
+}
+
+std::optional<Profile> WamWorker::requireProfile(const char* context) {
+    if (const auto* p = selectedProfile()) return *p;
+    emit errorOccurred(context, "No profile is loaded.");
+    return std::nullopt;
+}
+
 void WamWorker::emitConfig() {
-    emit configChanged(config_.curseforge_api_key.has_value(),
-                       config_.wow_path.has_value(),
-                       QString::fromStdString(config_.wow_path.value_or("")),
-                       static_cast<qint64>(config_.wow_flavor_id.value_or(0)),
-                       QString::fromStdString(config_.wow_flavor_name.value_or("")));
+    const Profile* p = selectedProfile();
+    const bool hasPath = p && p->wowPath.has_value();
+    emit configChanged(config_.curseforge_api_key.has_value(), hasPath,
+                       hasPath ? QString::fromStdString(*p->wowPath) : QString(),
+                       p ? static_cast<qint64>(p->flavorId.value_or(0)) : 0,
+                       p ? QString::fromStdString(p->flavorName.value_or("")) : QString());
+}
+
+void WamWorker::emitProfiles() {
+    QVariantList out;
+    for (const auto& p : profiles_.all()) {
+        // The selected profile's list is in memory; the others are read
+        // from disk (small files, and only on profile changes).
+        const int count = p.id == profiles_.selectedId()
+            ? static_cast<int>(state_.all().size())
+            : static_cast<int>(StateStore::peek(profiles_.statePath(p.id)).value_or(std::vector<InstalledAddon>{}).size());
+        out.push_back(QVariantMap{
+            {"id", static_cast<qint64>(p.id)},
+            {"name", QString::fromStdString(p.name)},
+            {"active", p.active},
+            {"wowPath", QString::fromStdString(p.wowPath.value_or(""))},
+            {"flavorName", QString::fromStdString(p.flavorName.value_or(""))},
+            {"addonCount", count},
+        });
+    }
+    emit profilesChanged(out, static_cast<qint64>(profiles_.selectedId()));
+}
+
+void WamWorker::emitAddons() {
+    emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+}
+
+void WamWorker::showSelected() {
+    loadState();
+    emitConfig(); // before profilesChanged: QML reads wowPath when the profiles change
+    emitProfiles();
+    emitAddons();
+}
+
+void WamWorker::collectGarbage() {
+    try {
+        AddonLibrary::collectGarbage(profiles_);
+    } catch (const std::exception&) {} // a zip left behind costs disk space, nothing else
 }
 
 void WamWorker::emitFlavors() {
@@ -71,18 +123,30 @@ void WamWorker::refreshFlavors() {
 }
 
 void WamWorker::detectFlavor() {
-    if (!config_.wow_path.has_value() || config_.wow_flavor_id.has_value()) return;
+    std::vector<Profile> todo;
+    for (const auto& p : profiles_.all())
+        if (p.wowPath.has_value() && !p.flavorId.has_value()) todo.push_back(p);
+    if (todo.empty()) return;
     if (flavors_.all().empty()) refreshFlavors(); // first run, or the file was removed
-    // Match the names as shown first, then CurseForge's own, so renaming a
-    // flavor in Settings does not stop its folder from being recognised.
-    const std::string folder = config_.wowFolderName();
-    auto id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(), folder);
-    if (!id.has_value()) id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(true), folder);
-    if (!id.has_value()) return; // unknown folder name: the user picks one in Settings
-    config_.wow_flavor_id = *id;
-    config_.wow_flavor_name = flavors_.nameFor(*id);
-    config_.save();
-    emitConfig();
+    bool changed = false;
+    for (const auto& p : todo) {
+        // Match the names as shown first, then CurseForge's own, so renaming a
+        // flavor in Settings does not stop its folder from being recognised.
+        const std::string folder = p.wowFolderName();
+        auto id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(), folder);
+        if (!id.has_value()) id = CurseForgeClient::matchFlavorForFolder(flavors_.asTypes(true), folder);
+        if (!id.has_value()) continue; // unknown folder name: the user picks one in Settings
+        try {
+            profiles_.setFlavor(p.id, *id, flavors_.nameFor(*id));
+            changed = true;
+        } catch (const std::exception& e) {
+            emit errorOccurred("setWowPath", QString::fromStdString(e.what()));
+        }
+    }
+    if (changed) {
+        emitConfig();
+        emitProfiles();
+    }
 }
 
 void WamWorker::initialize() {
@@ -91,14 +155,23 @@ void WamWorker::initialize() {
     } catch (const std::exception& e) {
         emit errorOccurred("initialize", QString::fromStdString(e.what()));
     }
-    loadState();
     if (config_.curseforge_api_key.has_value())
         client_.emplace(*config_.curseforge_api_key);
 
-    // A previous run killed mid-update leaves the old folders in .wam-backup.
-    if (config_.wow_path.has_value()) {
+    // First run: makes the first profile from config.json and installed.json.
+    try {
+        profiles_ = ProfileStore::load();
+    } catch (const std::exception& e) {
+        emit errorOccurred("initialize", QString::fromStdString(e.what()));
+    }
+
+    // A previous run killed mid-update leaves the old folders in .wam-backup,
+    // and one killed mid-switch leaves profiles/switch.json. Neither stops
+    // startup: the user still gets the app, with the error shown.
+    for (const auto& p : profiles_.all()) {
+        if (!p.active || !p.wowPath.has_value()) continue;
         try {
-            auto dir = config_.addonsDir();
+            auto dir = p.addonsDir();
             if (std::filesystem::exists(dir)) {
                 auto restored = AddonInstaller::recoverInterrupted(dir);
                 if (restored > 0)
@@ -109,11 +182,17 @@ void WamWorker::initialize() {
             emit errorOccurred("recovery", QString::fromStdString(e.what()));
         }
     }
+    try {
+        if (ProfileOps::recoverSwitch(profiles_))
+            emit errorOccurred("recovery", "Finished a profile switch that was interrupted.");
+    } catch (const std::exception& e) {
+        emit errorOccurred("recovery", "Could not finish an interrupted profile switch: " +
+                                           QString::fromStdString(e.what()));
+    }
 
     flavors_ = FlavorCache::load();
     emitFlavors();  // the cached flavors are usable before (or without) the network
-    emitConfig();
-    emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+    showSelected();
     refreshFlavors();
     detectFlavor();
 }
@@ -128,24 +207,108 @@ void WamWorker::setApiKey(const QString& key) {
 }
 
 void WamWorker::setWowPath(const QString& path) {
-    config_.wow_path = path.toStdString();
-    config_.wow_flavor_id.reset(); // it described the previous folder
-    config_.wow_flavor_name.reset();
-    config_.save();
+    auto prof = requireProfile("setWowPath");
+    if (!prof) return;
+    try {
+        profiles_.setWowPath(prof->id, path.toStdString()); // clears the flavor of the old folder
+    } catch (const std::exception& e) {
+        emit errorOccurred("setWowPath", QString::fromStdString(e.what()));
+        return;
+    }
     emitConfig();
+    emitProfiles();
     detectFlavor();
 }
 
 void WamWorker::setWowFlavor(qint64 flavorTypeId) {
-    if (flavorTypeId == 0) {
-        config_.wow_flavor_id.reset();
-        config_.wow_flavor_name.reset();
-    } else {
-        config_.wow_flavor_id = flavorTypeId;
-        config_.wow_flavor_name = flavors_.nameFor(flavorTypeId);
+    auto prof = requireProfile("setWowFlavor");
+    if (!prof) return;
+    try {
+        if (flavorTypeId == 0) profiles_.setFlavor(prof->id, std::nullopt, std::nullopt);
+        else profiles_.setFlavor(prof->id, flavorTypeId, flavors_.nameFor(flavorTypeId));
+    } catch (const std::exception& e) {
+        emit errorOccurred("setWowFlavor", QString::fromStdString(e.what()));
+        return;
     }
-    config_.save();
     emitConfig();
+    emitProfiles();
+}
+
+void WamWorker::selectProfile(qint64 id) {
+    try {
+        profiles_.select(id);
+    } catch (const std::exception& e) {
+        emit errorOccurred("selectProfile", QString::fromStdString(e.what()));
+        return;
+    }
+    showSelected();
+}
+
+void WamWorker::createProfile(const QString& name) {
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        emit errorOccurred("createProfile", "A profile needs a name.");
+        return;
+    }
+    try {
+        profiles_.select(profiles_.create(trimmed.toStdString()));
+    } catch (const std::exception& e) {
+        emit errorOccurred("createProfile", QString::fromStdString(e.what()));
+        return;
+    }
+    showSelected();
+}
+
+void WamWorker::renameProfile(qint64 id, const QString& name) {
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        emit errorOccurred("renameProfile", "A profile needs a name.");
+        return;
+    }
+    try {
+        profiles_.rename(id, trimmed.toStdString());
+    } catch (const std::exception& e) {
+        emit errorOccurred("renameProfile", QString::fromStdString(e.what()));
+        return;
+    }
+    emitProfiles();
+}
+
+void WamWorker::deleteProfile(qint64 id) {
+    const int64_t selectedBefore = profiles_.selectedId();
+    try {
+        profiles_.remove(id); // refuses the active and the last profile
+    } catch (const std::exception& e) {
+        emit errorOccurred("deleteProfile", QString::fromStdString(e.what()));
+        return;
+    }
+    if (profiles_.selectedId() != selectedBefore) showSelected();
+    else emitProfiles();
+}
+
+void WamWorker::activateProfile(qint64 id) {
+    // Re-downloads a zip the library lacks, by file id, the same way an
+    // install does. Through a temp file, so a broken download never sits in
+    // the library looking like a usable zip.
+    auto fetch = [this](const InstalledAddon& a, const std::filesystem::path& dest) {
+        if (!client_ || a.fileId == 0) return false;
+        auto file = client_->getFile(a.modId, a.fileId);
+        if (file.isBlocked()) return false;
+        ScopedTempFile tmpZip(Config::dataDir() / "tmp" / (std::to_string(file.id) + "_" + file.fileName));
+        if (!HttpClient::downloadToFile(*file.downloadUrl, tmpZip.path()).ok()) return false;
+        AddonLibrary::store(tmpZip.path(), dest);
+        return true;
+    };
+    try {
+        ProfileOps::activate(profiles_, id, fetch);
+        showSelected(); // the target's installed.json now has the folder sets the switch installed
+        const auto* p = profiles_.find(id);
+        emit profileActivated(id, p ? QString::fromStdString(p->name) : QString());
+    } catch (const std::exception& e) {
+        emit errorOccurred("activateProfile", QString::fromStdString(e.what()));
+        showSelected(); // a switch that failed half way may still have moved the active flags
+    }
+    emit activateProfileFinished();
 }
 
 void WamWorker::search(const QString& query) {
@@ -165,11 +328,20 @@ void WamWorker::renameFlavor(const QString& slug, const QString& name) {
         return;
     }
     flavors_.save();
-    // The WoW folder's flavor is stored with its display name.
-    if (config_.wow_flavor_id.has_value()) {
-        config_.wow_flavor_name = flavors_.nameFor(*config_.wow_flavor_id, config_.wow_flavor_name.value_or(""));
-        config_.save();
+    // Each profile stores its folder's flavor with its display name.
+    bool changed = false;
+    for (const auto& p : std::vector<Profile>(profiles_.all())) {
+        if (!p.flavorId.has_value()) continue;
+        const std::string newName = flavors_.nameFor(*p.flavorId, p.flavorName.value_or(""));
+        if (newName == p.flavorName.value_or("")) continue;
+        try {
+            profiles_.setFlavor(p.id, p.flavorId, newName);
+            changed = true;
+        } catch (const std::exception&) {}
+    }
+    if (changed) {
         emitConfig();
+        emitProfiles();
     }
     emitFlavors();
 }
@@ -202,7 +374,9 @@ void WamWorker::loadInstallFiles(qint64 modId, qint64 flavorTypeId, int index) {
 void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
     auto* client = requireClient("install");
     if (!client) return;
-    if (!config_.wow_path.has_value()) {
+    auto prof = requireProfile("install");
+    if (!prof) return;
+    if (!prof->wowPath.has_value()) {
         emit errorOccurred("install", "No WoW installation path configured.");
         return;
     }
@@ -218,7 +392,6 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
             return;
         }
 
-        auto addonsDir = config_.addonsDir();
         ScopedTempFile tmpZip(Config::dataDir() / "tmp" /
                               (std::to_string(file.id) + "_" + file.fileName));
         auto dl = HttpClient::downloadToFile(*file.downloadUrl, tmpZip.path());
@@ -227,18 +400,17 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
             return;
         }
 
-        // Reinstalling a tracked mod replaces its old folders atomically.
         auto existing = state_.find(modId);
-        auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir,
-                                                  existing ? existing->folders : std::vector<std::string>{});
-
         InstalledAddon rec;
         rec.modId = modId;
         rec.displayName = mod.name;
         recordFile(rec, file);
         rec.modSlug = mod.slug;
         rec.author = mod.author;
-        rec.folders = folders;
+        // Into the library, and on an active profile into AddOns/ too, where
+        // reinstalling a tracked mod replaces its old folders atomically.
+        rec.folders = ProfileOps::placeZip(*prof, rec, tmpZip.path(),
+                                           existing ? existing->folders : std::vector<std::string>{});
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
         rec.iconUrl = !mod.logoUrl.empty() ? mod.logoUrl : (existing ? existing->iconUrl : std::string());
@@ -252,16 +424,20 @@ void WamWorker::installFile(qint64 modId, qint64 fileId, qint64 flavorTypeId) {
 
         state_.upsert(rec);
         state_.save();
+        collectGarbage(); // the previous version's zip, unless another profile uses it
 
         emit installFinished(rec);
-        emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+        emitAddons();
+        emitProfiles(); // addon counts
     } catch (const std::exception& e) {
         emit errorOccurred("install", QString::fromStdString(e.what()));
     }
 }
 
 void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPath, qint64 flavorTypeId) {
-    if (!config_.wow_path.has_value()) {
+    auto prof = requireProfile("installManual");
+    if (!prof) return;
+    if (!prof->wowPath.has_value()) {
         emit errorOccurred("installManual", "No WoW installation path configured.");
         return;
     }
@@ -299,26 +475,29 @@ void WamWorker::installManual(qint64 modId, qint64 fileId, const QString& zipPat
             rec.flavorName = flavors_.nameFor(flavorTypeId);
         }
 
-        rec.folders = AddonInstaller::installZip(zip, config_.addonsDir(),
-                                                 existing ? existing->folders : std::vector<std::string>{});
+        rec.adopted = false; // wam installed these files now
+        rec.folders = ProfileOps::placeZip(*prof, rec, zip,
+                                           existing ? existing->folders : std::vector<std::string>{});
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = true;
-        rec.adopted = false; // wam installed these files now
 
         state_.upsert(rec);
         state_.save();
+        collectGarbage();
         emit installFinished(rec);
-        emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+        emitAddons();
+        emitProfiles();
     } catch (const std::exception& e) {
         emit errorOccurred("installManual", QString::fromStdString(e.what()));
     }
 }
 
 // The flavor to look files up in for an addon: its own, or for an adopted
-// addon that has none yet, the WoW folder's (that is where it lives).
+// addon that has none yet, its profile's folder's (that is where it lives).
 qint64 WamWorker::effectiveFlavor(const InstalledAddon& a) const {
-    return a.flavorTypeId != 0 ? static_cast<qint64>(a.flavorTypeId)
-                               : static_cast<qint64>(config_.wow_flavor_id.value_or(0));
+    if (a.flavorTypeId != 0) return static_cast<qint64>(a.flavorTypeId);
+    const Profile* p = selectedProfile();
+    return p ? static_cast<qint64>(p->flavorId.value_or(0)) : 0;
 }
 
 void WamWorker::checkOneUpdate(qint64 modId) {
@@ -380,16 +559,21 @@ void WamWorker::checkAllUpdates() {
     emit allUpdatesChecked();
 }
 
-void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
+void WamWorker::applyUpdate(qint64 modId, qint64 fileId, qint64 profileId) {
     auto fail = [&](const QString& msg) {
         emit errorOccurred("applyUpdate", msg);
         emit updateFailed(modId, msg);
     };
 
+    // The update was found for one profile; requests queue in order, so
+    // another may have been selected before this one ran.
+    if (profileId != profiles_.selectedId())
+        return fail("Not applied: another profile was selected before the update ran.");
+    const Profile* prof = selectedProfile();
     auto existing = state_.find(modId);
     if (!existing) return fail("Mod " + QString::number(modId) + " is not tracked.");
     if (!client_) return fail("No CurseForge API key configured.");
-    if (!config_.wow_path) return fail("No WoW installation path configured.");
+    if (!prof || !prof->wowPath) return fail("No WoW installation path configured.");
 
     try {
         auto file = client_->getFile(modId, fileId); // re-fetch: the files list can move between check and apply
@@ -400,20 +584,17 @@ void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
             return fail("Third-party downloads are blocked by the author.");
         }
 
-        auto addonsDir = config_.addonsDir();
         ScopedTempFile tmpZip(Config::dataDir() / "tmp" / (std::to_string(file.id) + "_" + file.fileName));
         auto dl = HttpClient::downloadToFile(*file.downloadUrl, tmpZip.path());
         if (!dl.ok()) return fail("Download failed (HTTP " + QString::number(dl.status) + ").");
-
-        // Stage, then swap with rollback: a failure anywhere leaves the
-        // installed version exactly as it was.
-        auto folders = AddonInstaller::installZip(tmpZip.path(), addonsDir, existing->folders);
 
         InstalledAddon rec = *existing; // keeps flavorTypeId/flavorName
         recordFile(rec, file);
         rec.modSlug = mod.slug;
         if (!mod.author.empty()) rec.author = mod.author;
-        rec.folders = folders;
+        // Stage, then swap with rollback: a failure anywhere leaves the
+        // installed version exactly as it was. Library only when inactive.
+        rec.folders = ProfileOps::placeZip(*prof, rec, tmpZip.path(), existing->folders);
         rec.installedAt = nowIso8601();
         rec.manuallyProvided = false;
         rec.adopted = false; // wam downloaded and installed these files now
@@ -424,9 +605,10 @@ void WamWorker::applyUpdate(qint64 modId, qint64 fileId) {
 
         state_.upsert(rec);
         state_.save();
+        collectGarbage();
 
         emit updateApplied(rec);
-        emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+        emitAddons();
     } catch (const std::exception& e) {
         fail(QString::fromStdString(e.what()));
     }
@@ -447,13 +629,19 @@ void WamWorker::setFlavor(qint64 modId, qint64 flavorTypeId) {
 }
 
 void WamWorker::scan() {
-    if (!config_.wow_path.has_value()) {
+    const Profile* prof = selectedProfile();
+    if (!prof || !prof->wowPath.has_value()) {
         emit errorOccurred("scan", "No WoW installation path configured.");
         emit scanFinished({});
         return;
     }
+    if (!prof->active) {
+        emit errorOccurred("scan", kInactiveNote);
+        emit scanFinished({});
+        return;
+    }
     try {
-        const auto entries = Reconciler::scan(config_.addonsDir(), state_);
+        const auto entries = Reconciler::scan(prof->addonsDir(), state_);
         const auto groups = Reconciler::groupByModId(entries);
 
         // Names and icons for .toc-tagged mods, batched. A nicety only: with
@@ -517,13 +705,24 @@ void WamWorker::scan() {
     }
 }
 
-void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSiblings, bool rescan) {
-    if (!config_.wow_path.has_value()) {
+void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSiblings, bool rescan,
+                      qint64 profileId) {
+    const Profile* prof = selectedProfile();
+    if (profileId != profiles_.selectedId()) {
+        // The scan these folders came from was for another profile.
+        emit errorOccurred("adopt", "Not adopted: another profile was selected before it ran.");
+        return;
+    }
+    if (!prof || !prof->wowPath.has_value()) {
         emit errorOccurred("adopt", "No WoW installation path configured.");
         return;
     }
+    if (!prof->active) {
+        emit errorOccurred("adopt", kInactiveNote);
+        return;
+    }
     try {
-        const auto dir = config_.addonsDir();
+        const auto dir = prof->addonsDir();
         std::vector<std::string> list;
         for (const auto& f : folders) list.push_back(f.toStdString());
 
@@ -557,7 +756,8 @@ void WamWorker::adopt(qint64 modId, const QStringList& folders, bool includeSibl
         }
         state_.save();
         emit adopted(modId, QString::fromStdString(rec.displayName), static_cast<int>(list.size()));
-        emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+        emitAddons();
+        emitProfiles();
     } catch (const std::exception& e) {
         emit errorOccurred("adopt", QString::fromStdString(e.what()));
     }
@@ -666,8 +866,13 @@ void WamWorker::loadChangelog(qint64 modId, qint64 fileId) {
 }
 
 void WamWorker::loadState() {
+    const Profile* prof = selectedProfile();
+    if (!prof) {
+        state_ = StateStore{};
+        return;
+    }
     try {
-        state_ = StateStore::load();
+        state_ = StateStore::load(profiles_.statePath(prof->id));
     } catch (const std::exception& e) {
         emit errorOccurred("initialize", QString::fromStdString(e.what()));
         return;
@@ -689,16 +894,16 @@ void WamWorker::removeAddon(qint64 modId) {
         emit errorOccurred("removeAddon", "No tracked addon with mod id " + QString::number(modId));
         return;
     }
-    if (!config_.wow_path.has_value()) {
-        emit errorOccurred("removeAddon", "No WoW installation path configured.");
-        return;
-    }
+    auto prof = requireProfile("removeAddon");
+    if (!prof) return;
     try {
-        AddonInstaller::removeFolders(config_.addonsDir(), found->folders);
+        ProfileOps::removeAddon(*prof, *found); // AddOns/ only when the profile is active
         state_.remove(modId);
         state_.save();
+        collectGarbage();
         emit addonRemoved(modId);
-        emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+        emitAddons();
+        emitProfiles();
     } catch (const std::exception& e) {
         emit errorOccurred("removeAddon", QString::fromStdString(e.what()));
     }
@@ -711,8 +916,10 @@ void WamWorker::untrackAddon(qint64 modId) {
     }
     state_.remove(modId);
     state_.save();
+    collectGarbage();
     emit addonUntracked(modId);
-    emit addonListLoaded(toQList<wam::InstalledAddon>(state_.all()));
+    emitAddons();
+    emitProfiles();
 }
 
 } // namespace wam::gui

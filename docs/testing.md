@@ -22,6 +22,10 @@ ctest --test-dir build --output-on-failure
 - `.toc` reading, scanning and adoption
 - flavor matching and the flavor cache
 - HTML-to-text, parsing of sample CurseForge JSON, HTTPS-only requests
+- profiles: first-run migration, damaged `profiles.json`, switching by diff,
+  snapshots of adopted addons, a failed fetch, corrupt zips and failed or interrupted
+  switches, damaged lists of other profiles, edits to
+  an inactive profile, removing profiles and library garbage
 
 `wam_gui_tests` covers:
 
@@ -31,6 +35,10 @@ ctest --test-dir build --output-on-failure
 - manual installs
 - against a fake CurseForge: update check, apply, failed download, blocked
   download, and where the API key is sent
+- profiles: migration on first start, every key of `profiles`, creating and
+  selecting, scan refused when inactive, installing into an inactive profile,
+  switching `AddOns/` both ways, refetching a lost zip, and an update check
+  that must not land in the next profile
 
 ## How tests stay offline and safe
 
@@ -94,8 +102,8 @@ Neither job uses a CurseForge key or the network beyond installing packages.
 
 ## Current status
 
-2026-10-16, CachyOS, Qt 6.12.0, Kirigami 6.31.0: all three suites pass
-(`wam_tests` 139 checks, `wam_flavor_tests` 10, `wam_gui_tests` 130).
+2026-10-17, CachyOS, Qt 6.12.0, Kirigami 6.31.0: all three suites pass
+(`wam_tests` 176 checks, `wam_flavor_tests` 10, `wam_gui_tests` 143).
 
 Earlier history: the first versions were written in a sandbox (Ubuntu 24.04,
 Qt 6.4.2, no Kirigami, no access to `api.curseforge.com`), where only the

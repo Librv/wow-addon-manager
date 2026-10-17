@@ -14,6 +14,7 @@
 #include "core/flavor_cache.hpp"
 #include "core/http_client.hpp"
 #include "core/state_store.hpp"
+#include "core/profiles.hpp"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -389,6 +390,32 @@ bool hasAddonFolder(const QString& wow, const char* folder) {
     return QDir(wow + "/Interface/AddOns/" + folder).exists();
 }
 
+// The selected profile's addon list on disk (where installed.json lived
+// before profiles). Only after a controller has started: load() migrates.
+StateStore profileState(qint64 id = 0) {
+    const auto profiles = ProfileStore::load();
+    return StateStore::load(profiles.statePath(id != 0 ? id : profiles.selectedId()));
+}
+
+QVariantMap profileMap(const WamController& c, qint64 id) {
+    for (const auto& v : c.profiles())
+        if (v.toMap().value("id").toLongLong() == id) return v.toMap();
+    return {};
+}
+
+// Every key QML reads from wam.profiles, with the type it binds to.
+bool profileMapsComplete(const WamController& c) {
+    if (c.profiles().isEmpty()) return false;
+    for (const auto& v : c.profiles()) {
+        const auto m = v.toMap();
+        const bool ok = m.value("id").typeId() == QMetaType::LongLong && m.value("name").typeId() == QMetaType::QString &&
+                        m.value("active").typeId() == QMetaType::Bool && m.value("wowPath").typeId() == QMetaType::QString &&
+                        m.value("flavorName").typeId() == QMetaType::QString && m.value("addonCount").typeId() == QMetaType::Int;
+        if (!ok) return false;
+    }
+    return true;
+}
+
 // Stands in for CurseForge and its CDN. Answers the requests a test scripted
 // by method and URL, records every request (the worker thread calls in), and
 // fails any request nobody scripted, so a test never needs the real API.
@@ -417,6 +444,9 @@ void testControllerEndToEnd() {
     QTemporaryDir tmp;
     qputenv("XDG_CONFIG_HOME", (tmp.path() + "/config").toUtf8());
     qputenv("XDG_DATA_HOME", (tmp.path() + "/data").toUtf8());
+    const QString wow = tmp.path() + "/wow";
+    // A setup from before profiles: the folder in config.json, the addons in installed.json.
+    writeText(tmp.path() + "/config/wow-addon-manager/config.json", QString(R"({"wow_path":"%1"})").arg(wow).toUtf8());
 
     QDir().mkpath(tmp.path() + "/data/wow-addon-manager");
     QFile f(tmp.path() + "/data/wow-addon-manager/installed.json");
@@ -440,16 +470,22 @@ void testControllerEndToEnd() {
         QObject::connect(&c, &WamController::errorOccurred,
                          [&](const QString& ctx, const QString& msg) { errContext = ctx; errMessage = msg; });
 
-        check(waitFor([&] { return c.installedAddons()->rowCount() == 1; }),
+        check(waitFor([&] { return c.installedAddons()->rowCount() == 1 && !c.profiles().isEmpty(); }),
               "state loaded on the worker thread reaches the GUI-thread model");
+        const qint64 firstId = c.currentProfileId();
+        const auto first = profileMap(c, firstId);
+        check(c.profiles().size() == 1 && first.value("name") == "Default" && first.value("active").toBool() &&
+              first.value("wowPath") == wow && first.value("addonCount") == 1 && c.currentProfileActive(),
+              "first start makes one active profile from the old config and installed.json");
+        check(profileMapsComplete(c), "every key QML reads from a profile is there, with its type");
         check(c.installedAddons()->data(c.installedAddons()->index(0),
                                         InstalledAddonsModel::FlavorNameRole).toString() == "Retail",
               "the stored flavor survives the cross-thread round trip");
         check(c.flavorEntries()->rowCount() == 2 && c.flavors().size() == 2,
               "flavors cached on disk are available at startup with no API key and no network");
         check(c.flavors()[1].toMap().value("name").toString() == "Ever", "the cached display name is what the flavor list shows");
-        check(!c.hasApiKey() && !c.hasWowPath(), "no key or path configured on a fresh config");
-        check(c.wowFlavorId() == 0 && c.wowFlavorName().isEmpty(), "no WoW flavor is known on a fresh config");
+        check(!c.hasApiKey() && c.hasWowPath() && c.wowPath() == wow, "no key, and the profile has the old config's folder");
+        check(c.wowFlavorId() == 0 && c.wowFlavorName().isEmpty(), "no WoW flavor is known for a folder that names none");
 
         c.search("anything"); // no API key: must fail cleanly through the error signal, not crash or hang
         check(waitFor([&] { return errContext == "search"; }), "an API call without a key reports an error");
@@ -463,9 +499,16 @@ void testControllerEndToEnd() {
         QDir().mkpath(tmp.path() + "/wow/Interface/AddOns/Loose");
         QDir().mkpath(tmp.path() + "/wow/Interface/AddOns/Persisted"); // already tracked: must not be listed
 
-        c.setWowPath(tmp.path() + "/wow");
-        check(waitFor([&] { return c.hasWowPath(); }), "setting the WoW path reaches the controller");
-        check(c.wowFlavorId() == 0, "without an API key the flavor cannot be worked out, and stays unknown");
+        // A second profile: selected at once, empty, on the same folder but
+        // not active there, since the first profile's addons are in it.
+        c.createProfile("Forever");
+        check(waitFor([&] { return c.profiles().size() == 2 && c.currentProfileId() != firstId; }) &&
+              c.installedAddons()->rowCount() == 0 && !c.currentProfileActive() && c.wowPath() == wow,
+              "a new profile is selected, has no addons and is inactive on the shared folder");
+        errContext.clear();
+        c.scan();
+        check(waitFor([&] { return !c.scanning(); }) && errContext == "scan" && c.scanResults()->rowCount() == 0,
+              "scanning is refused on an inactive profile, whose folder holds another profile's addons");
 
         // A folder named after a cached flavor is recognised from the cache alone.
         QDir().mkpath(tmp.path() + "/wow_forever/_forever_");
@@ -476,13 +519,18 @@ void testControllerEndToEnd() {
         check(waitFor([&] { return c.wowFlavorName() == "Forever!"; }), "renaming a flavor updates the WoW folder's stored flavor name");
         check(waitFor([&] { return c.flavors()[1].toMap().value("name").toString() == "Forever!"; }), "and the flavor list");
         check(wam::FlavorCache::load().nameFor(40) == "Forever!", "and flavors.json on disk");
-        c.setWowPath(tmp.path() + "/wow");
-        check(waitFor([&] { return !c.wowFlavorId() && c.hasWowPath(); }), "a folder that names no flavor leaves it unknown");
+        c.setWowPath(wow);
+        check(waitFor([&] { return !c.wowFlavorId() && c.wowPath() == wow; }), "a folder that names no flavor leaves it unknown");
 
         c.setWowFlavor(517); // a manual choice works without a key; the name lookup just comes back empty
         check(waitFor([&] { return c.wowFlavorId() == 517; }), "a flavor picked by hand is stored and reaches the controller");
-        c.setWowPath(tmp.path() + "/wow");
+        c.setWowPath(tmp.path() + "/elsewhere");
         check(waitFor([&] { return c.wowFlavorId() == 0; }), "changing the WoW path clears the flavor that described the old folder");
+
+        c.selectProfile(firstId);
+        check(waitFor([&] { return c.currentProfileId() == firstId && c.installedAddons()->rowCount() == 1; }) &&
+              c.wowPath() == wow && c.currentProfileActive(),
+              "switching back to the first profile shows its addons and folder again");
 
         c.scan();
         check(waitFor([&] { return !c.scanning(); }), "a scan finishes");
@@ -557,7 +605,7 @@ void testManualReinstallReplacesOldFolders() {
     check(waitFor([&] { return c.installedAddons()->fileIdFor(60) == 601; }) &&
           !hasAddonFolder(wow, "MineExtra") && readText(wow + "/Interface/AddOns/Mine/Mine.toc").contains("v2"),
           "a manual reinstall replaces the old version, including a folder it no longer ships");
-    const auto rec = StateStore::load().find(60);
+    const auto rec = profileState().find(60);
     check(rec && rec->folders == std::vector<std::string>({"Mine"}) && rec->manuallyProvided,
           "installed.json records only the new version's folders, as a manual file");
 }
@@ -620,13 +668,13 @@ void testUpdatesWithFakeCurseForge() {
         check(waitFor([&] { return c.installedAddons()->fileIdFor(42) == 102; }) &&
               readText(addons + "/Foo/core.lua") == "v2\n" && !hasAddonFolder(wow, "FooOptions"),
               "applying an update installs the new files and removes the folder the new version dropped");
-        const auto foo = StateStore::load().find(42);
+        const auto foo = profileState().find(42);
         check(foo && foo->fileId == 102 && foo->folders == std::vector<std::string>({"Foo"}) && !c.pendingUpdates()->find(42),
               "the applied update is saved to installed.json and leaves the queue");
 
         c.applyUpdate(43);
         check(waitFor([&] { const auto* u = c.pendingUpdates()->find(43); return u && u->status == PendingUpdate::Status::Failed; }) &&
-              readText(addons + "/Bar/bar.lua") == "bar v1\n" && StateStore::load().find(43)->fileId == 300,
+              readText(addons + "/Bar/bar.lua") == "bar v1\n" && profileState().find(43)->fileId == 300,
               "a failed download leaves the installed addon and its record as they were");
 
         // Blocked download, then the user supplies the zip: the flavor chosen at install is kept.
@@ -636,7 +684,7 @@ void testUpdatesWithFakeCurseForge() {
         zipBytes(baz, {{"Baz/Baz.toc", "## Title: Baz\n"}});
         c.installManual(44, 440, baz);
         check(waitFor([&] { return c.installedAddons()->fileIdFor(44) == 440; }), "the manual zip installs");
-        const auto bazRec = StateStore::load().find(44);
+        const auto bazRec = profileState().find(44);
         check(bazRec && bazRec->flavorTypeId == 517 && bazRec->manuallyProvided && hasAddonFolder(wow, "Baz"),
               "a manual install after a blocked download keeps the flavor picked for it");
     } // joins the worker before the fake goes away
@@ -653,6 +701,95 @@ void testUpdatesWithFakeCurseForge() {
     check(keyOnlyToApi, "the API key goes with every CurseForge API request and never to the download host");
     for (const auto& u : fake.unexpected) std::cerr << "unscripted request: " << u << "\n";
     check(fake.unexpected.empty(), "the app made no request the fake CurseForge was not scripted for");
+}
+
+// Installs into an inactive profile, then switches the WoW folder over to it
+// and back, against a fake CurseForge.
+void testProfilesWithFakeCurseForge() {
+    QTemporaryDir tmp;
+    useFreshHome(tmp);
+    const QString wow = tmp.path() + "/wow";
+    const QString lib = tmp.path() + "/data/wow-addon-manager/library";
+    writeText(tmp.path() + "/config/wow-addon-manager/config.json",
+              QString(R"({"curseforge_api_key":"test-key","wow_path":"%1","wow_flavor_id":517,"wow_flavor_name":"Retail"})")
+                  .arg(wow).toUtf8());
+    writeText(tmp.path() + "/data/wow-addon-manager/installed.json", R"({"addons":[
+        {"modId":42,"fileId":100,"displayName":"Foo","fileName":"foo-100.zip","channel":1,"folders":["Foo"],"flavorTypeId":517,"flavorName":"Retail"}]})");
+    writeText(wow + "/Interface/AddOns/Foo/core.lua", "foo v1\n");
+
+    auto json = [](const std::string& body) { return HttpResponse{200, body}; };
+    FakeCurseForge fake;
+    fake.on("GET", kApi + "/games/1/version-types", json(R"({"data":[{"id":517,"name":"Retail","slug":"wow-retail"}]})"));
+    fake.on("POST", kApi + "/mods", json(R"({"data":[{"id":42,"name":"Foo","slug":"foo"},{"id":50,"name":"New","slug":"new"}]})"));
+    fake.on("POST", kApi + "/mods/files", json(R"({"data":[{"id":100,"modId":42,"fileName":"foo-100.zip"},{"id":500,"modId":50,"fileName":"new-500.zip"}]})"));
+    fake.on("GET", kApi + "/mods/42", json(R"({"data":{"id":42,"name":"Foo","slug":"foo"}})"));
+    fake.on("GET", kApi + "/mods/42/files?pageSize=50&index=0&gameVersionTypeId=517", json(R"({"data":[
+        {"id":101,"modId":42,"fileName":"foo-101.zip","releaseType":1,"downloadUrl":"u"}]})"));
+    fake.on("GET", kApi + "/mods/50", json(R"({"data":{"id":50,"name":"New","slug":"new"}})"));
+    fake.on("GET", kApi + "/mods/50/files/500", json(R"({"data":{"id":500,"modId":50,"fileName":"new-500.zip","releaseType":1,
+        "downloadUrl":"https://edge.forgecdn.net/files/1/500/new-500.zip"}})"));
+    fake.on("DOWNLOAD", "https://edge.forgecdn.net/files/1/500/new-500.zip",
+            HttpResponse{200, zipBytes(tmp.path() + "/new-500.zip", {{"New/New.toc", "## Title: New\n"}}).toStdString()});
+    HttpClient::transportForTesting = [&fake](const HttpRequest& r) { return fake.answer(r); };
+    auto downloads = [&fake] {
+        std::lock_guard<std::mutex> lock(fake.m);
+        return std::count_if(fake.seen.begin(), fake.seen.end(), [](const HttpRequest& r) { return r.method == "DOWNLOAD"; });
+    };
+
+    {
+        WamController c;
+        QString activatedName;
+        QString errContext;
+        QObject::connect(&c, &WamController::profileActivated, [&](qint64, const QString& name) { activatedName = name; });
+        QObject::connect(&c, &WamController::errorOccurred, [&](const QString& ctx, const QString&) { errContext = ctx; });
+        check(waitFor([&] { return c.installedAddons()->rowCount() == 1 && !c.profiles().isEmpty(); }),
+              "test setup: the migrated profile loads");
+        const qint64 firstId = c.currentProfileId();
+
+        // An update check still running when another profile is selected.
+        c.checkAllUpdates();
+        c.createProfile("Raid");
+        check(waitFor([&] { return c.currentProfileId() != firstId && !c.checkingUpdates(); }) &&
+              c.pendingUpdates()->count() == 0,
+              "an update check that finishes after switching profiles leaves nothing in the new profile's queue");
+        const qint64 raidId = c.currentProfileId();
+
+        c.installFile(50, 500, 517);
+        check(waitFor([&] { return c.installedAddons()->fileIdFor(50) == 500; }) &&
+              !hasAddonFolder(wow, "New") && hasAddonFolder(wow, "Foo") && QFile::exists(lib + "/50/500.zip") &&
+              profileState(raidId).find(50).value_or(InstalledAddon{}).folders == std::vector<std::string>({"New"}),
+              "installing into an inactive profile lists it there and stores the zip, leaving AddOns/ untouched");
+
+        c.activateProfile(raidId);
+        check(c.activatingProfile(), "activatingProfile is set as soon as a switch is asked for");
+        check(waitFor([&] { return !activatedName.isEmpty(); }) && activatedName == "Raid" &&
+              hasAddonFolder(wow, "New") && !hasAddonFolder(wow, "Foo") && c.currentProfileActive() &&
+              !profileMap(c, firstId).value("active").toBool(),
+              "activating a profile swaps AddOns/ to its addons and reports it");
+        check(waitFor([&] { return !c.activatingProfile(); }), "activatingProfile clears when the switch is done");
+
+        // Back again: Foo was never downloaded, so it comes from the snapshot
+        // taken when the folder switched away from it.
+        activatedName.clear();
+        c.selectProfile(firstId);
+        c.activateProfile(firstId);
+        check(waitFor([&] { return !activatedName.isEmpty(); }) && hasAddonFolder(wow, "Foo") &&
+              readText(wow + "/Interface/AddOns/Foo/core.lua") == "foo v1\n" && !hasAddonFolder(wow, "New") &&
+              downloads() == 1,
+              "switching back restores the first profile's addons from the library, with no download");
+
+        // A zip gone from the library is fetched again by file id.
+        QFile::remove(lib + "/50/500.zip");
+        activatedName.clear();
+        c.activateProfile(raidId);
+        check(waitFor([&] { return !activatedName.isEmpty(); }) && hasAddonFolder(wow, "New") && downloads() == 2,
+              "a switch downloads a zip the library lost, by its file id");
+        check(waitFor([&] { return !c.activatingProfile(); }) && errContext.isEmpty(), "no install or switch above reported an error");
+    }
+
+    HttpClient::transportForTesting = [](const HttpRequest& r) { return HttpResponse{0, "network is off in tests: " + r.url}; };
+    for (const auto& u : fake.unexpected) std::cerr << "unscripted request: " << u << "\n";
+    check(fake.unexpected.empty(), "profiles made no request the fake CurseForge was not scripted for");
 }
 
 } // namespace
@@ -679,6 +816,7 @@ int main(int argc, char** argv) {
     testControllerEndToEnd();
     testManualReinstallReplacesOldFolders();
     testUpdatesWithFakeCurseForge();
+    testProfilesWithFakeCurseForge();
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;

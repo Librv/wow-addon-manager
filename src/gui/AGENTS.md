@@ -5,8 +5,9 @@ repo-wide rules in `/AGENTS.md` apply too. Read `docs/gui.md` before changing
 QML.
 
 - **Threading:** `WamWorker` lives on one dedicated thread and owns the core's
-  config, state and API client. `WamController` is what QML sees; its slots
-  forward to the worker with queued `invokeMethod` calls and return at once.
+  config, profiles, the selected profile's state and the API client.
+  `WamController` is what QML sees; its slots forward to the worker with
+  queued `invokeMethod` calls and return at once.
   Never call a `WamWorker` member directly from the GUI thread.
 - **Requests run one at a time, in order.** A new request waits behind
   everything already queued; design UI feedback with that in mind.

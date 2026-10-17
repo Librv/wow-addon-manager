@@ -26,6 +26,7 @@ add_library(wam_core
     src/core/html_text.cpp
     src/core/addon_installer.cpp
     src/core/state_store.cpp
+    src/core/profiles.cpp
     src/core/toc_reader.cpp
     src/core/reconciler.cpp
 )
@@ -65,7 +66,8 @@ if(WAM_BUILD_GUI)
     # WAM_QML_DIR dev mode, so list a new singleton in both.
     set(WAM_QML_FILES
         Main AddonDetails AddonIcon AddonMeta AddonRow AppColors AuthorLine ChangelogBox FieldNote FolderChip
-        InstallDialog InstalledPage ScanDialog SearchPage SettingsPage StyledPage UpdatesDialog)
+        InstallDialog InstalledPage ProfileNameDialog ProfileTabs ScanDialog SearchPage SettingsPage StyledPage
+        UpdatesDialog)
     set(WAM_QML_SOURCES)
     foreach(f ${WAM_QML_FILES})
         set(src src/gui/qml/${f}.qml)

@@ -13,7 +13,9 @@
 #include "core/flavor_cache.hpp"
 #include "core/html_text.hpp"
 #include "core/http_client.hpp"
+#include "core/profiles.hpp"
 
+#include <nlohmann/json.hpp>
 #include <zip.h>
 #include <iostream>
 #include <cassert>
@@ -757,6 +759,571 @@ void testHttpIsHttpsOnly() {
           "a request carrying the API key is refused over plain http");
 }
 
+void testListZipFolders(const fs::path& workDir) {
+    auto good = workDir / "list_good.zip";
+    buildZip(good, {{"B/B.toc", "x"}, {"A/A.toc", "x"}, {"A/Libs/L.lua", "x"}});
+    auto bad = workDir / "list_bad.zip";
+    buildZip(bad, {{"A/A.toc", "x"}, {"A/../../evil.lua", "x"}});
+    bool threw = false;
+    try { AddonInstaller::listZipFolders(bad); } catch (const std::exception&) { threw = true; }
+    check(AddonInstaller::listZipFolders(good) == std::vector<std::string>{"A", "B"} && threw,
+          "listZipFolders returns the folder set and rejects an entry that escapes");
+}
+
+// Points config and data at a fresh folder, as a user with no profiles yet.
+fs::path freshHome(const fs::path& workDir, const std::string& name) {
+    auto home = workDir / name;
+    fs::remove_all(home);
+    setenv("XDG_CONFIG_HOME", (home / "cfg").string().c_str(), 1);
+    setenv("XDG_DATA_HOME", (home / "data").string().c_str(), 1);
+    return home;
+}
+
+void restoreHome(const fs::path& workDir) {
+    setenv("XDG_CONFIG_HOME", workDir.string().c_str(), 1);
+    setenv("XDG_DATA_HOME", workDir.string().c_str(), 1);
+}
+
+// Every file under dir with its content, to see whether anything changed.
+std::string treeOf(const fs::path& dir) {
+    std::vector<std::string> lines;
+    for (auto& e : fs::recursive_directory_iterator(dir))
+        lines.push_back(fs::relative(e.path(), dir).generic_string() +
+                        (e.is_regular_file() ? "=" + readAll(e.path()) : "/"));
+    std::sort(lines.begin(), lines.end());
+    std::string out;
+    for (auto& l : lines) out += l + "\n";
+    return out;
+}
+
+void testProfilesMigrateOldState(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_migrate");
+    Config cfg;
+    cfg.wow_path = (home / "wow" / "_retail_").string();
+    cfg.wow_flavor_id = 517;
+    cfg.wow_flavor_name = "Retail";
+    cfg.save();
+    const auto legacy = Config::dataDir() / "installed.json";
+    const std::string legacyBytes =
+        R"({"addons":[{"modId":7,"fileId":8,"displayName":"Old","folders":["Old"]}]})";
+    writeFile(legacy, legacyBytes);
+
+    auto store = ProfileStore::load();
+    const auto& p = store.selected();
+    check(store.all().size() == 1 && p.name == "Retail" && p.autoNamed && p.active &&
+          p.wowPath == cfg.wow_path && p.flavorId == std::optional<int64_t>(517) &&
+          StateStore::load(store.statePath(p.id)).find(7).has_value() && readAll(legacy) == legacyBytes,
+          "first run makes one active profile named after the flavor, with the old addons, and keeps installed.json");
+
+    store.setFlavor(p.id, 526, std::string("Classic"));
+    const bool followed = store.selected().name == "Classic";
+    store.rename(p.id, "Mine");
+    store.setFlavor(p.id, 517, std::string("Retail"));
+    auto again = ProfileStore::load();
+    check(followed && again.all().size() == 1 && again.selected().name == "Mine",
+          "an auto-named profile follows its flavor until renamed, and a second load does not migrate again");
+
+    // A damaged profiles.json is kept and the profile folders on disk come back, inactive.
+    writeFile(store.statePath(p.id + 1), R"({"addons":[]})"); // a second profile folder
+    const std::string damaged = R"({"profiles":[{"id":)";
+    writeFile(Config::dataDir() / "profiles.json", damaged);
+    auto recovered = ProfileStore::load();
+    bool keptDamaged = false;
+    for (auto& e : fs::directory_iterator(Config::dataDir()))
+        if (e.path().filename().string().rfind("profiles.json.damaged-", 0) == 0 && readAll(e.path()) == damaged)
+            keptDamaged = true;
+    check(keptDamaged && recovered.all().size() == 2 && recovered.selectedId() == p.id &&
+          recovered.find(p.id)->name == "Recovered " + std::to_string(p.id) && !recovered.find(p.id)->active &&
+          !recovered.find(p.id)->wowPath && !recovered.find(p.id + 1)->active &&
+          StateStore::load(recovered.statePath(p.id)).find(7).has_value(),
+          "a damaged profiles.json is set aside and each profile folder comes back as an inactive \"Recovered\" profile");
+    check(recovered.create("New") == p.id + 2, "a recovered store hands out ids past the existing folders");
+
+    // A recovered profile's addons keep their zips.
+    InstalledAddon old;
+    old.modId = 9;
+    old.fileId = 10;
+    auto orphanState = StateStore::load(store.statePath(p.id));
+    orphanState.upsert(old);
+    orphanState.save();
+    const auto orphanZip = AddonLibrary::zipFor(p.id, old);
+    writeFile(orphanZip, "zip bytes");
+    AddonLibrary::collectGarbage(recovered);
+    check(fs::exists(orphanZip), "library cleanup keeps zips that a recovered profile uses");
+
+    freshHome(workDir, "profiles_migrate_bare");
+    auto bare = ProfileStore::load();
+    check(bare.selected().name == "Default" && !bare.selected().active && !bare.selected().wowPath,
+          "with no config, the first profile is \"Default\", inactive and has no folder");
+    restoreHome(workDir);
+}
+
+// Zips for the robustness tests below.
+void buildBigCorruptZip(const fs::path& dest) {
+    std::string body;
+    for (int i = 0; i < 400; ++i) body += "line " + std::to_string(i * 7919 % 1000) + "\n";
+    buildZip(dest, {{"Broken/Broken.toc", body}});
+    // Flip bytes inside the entry's data, leaving the central directory intact.
+    std::string bytes = readAll(dest);
+    const size_t dataStart = 30 + std::string("Broken/Broken.toc").size();
+    for (size_t i = dataStart + 10; i < dataStart + 30; ++i) bytes[i] = static_cast<char>(bytes[i] ^ 0x5a);
+    std::ofstream(dest, std::ios::binary | std::ios::trunc) << bytes;
+}
+
+void testFailedSwitchDoesNotGetStuck(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_stuck");
+    const auto wow = home / "wow" / "_retail_";
+    const auto addons = wow / "Interface" / "AddOns";
+    Config cfg;
+    cfg.wow_path = wow.string();
+    cfg.save();
+    const auto zips = home / "zips";
+    fs::create_directories(zips);
+    buildZip(zips / "a.zip", {{"A/A.toc", "a"}});
+    buildZip(zips / "good.zip", {{"Good/Good.toc", "good"}});
+    buildZip(zips / "swap1.zip", {{"Swap/Swap.toc", "v1"}});
+    buildZip(zips / "swap2.zip", {{"Swap/Swap.toc", "v2"}});
+    buildBigCorruptZip(zips / "broken.zip");
+    auto mk = [](int64_t mod, int64_t file) { InstalledAddon x; x.modId = mod; x.fileId = file; x.displayName = "m" + std::to_string(mod); return x; };
+
+    auto store = ProfileStore::load();
+    const int64_t a = store.selectedId();
+    const int64_t b = store.create("B");
+    auto fill = [&](int64_t id, std::vector<std::pair<InstalledAddon, std::string>> list) {
+        auto st = StateStore::load(store.statePath(id));
+        for (auto& [x, zip] : list) {
+            x.folders = ProfileOps::placeZip(*store.find(id), x, zips / zip, {});
+            st.upsert(x);
+        }
+        st.save();
+    };
+    fill(a, {{mk(1, 10), "a.zip"}, {mk(3, 30), "swap1.zip"}});
+    fill(b, {{mk(3, 31), "swap2.zip"}, {mk(4, 40), "good.zip"}});
+
+    // 1. Corrupt data behind a valid index: refused before AddOns changes.
+    const std::string before = treeOf(addons);
+    { auto st = StateStore::load(store.statePath(b)); auto x = mk(5, 50); x.folders = {"Broken"}; st.upsert(x); st.save(); }
+    fs::create_directories(AddonLibrary::dir() / "5");
+    fs::copy_file(zips / "broken.zip", AddonLibrary::zipFor(b, mk(5, 50)));
+    bool threw = false;
+    try { ProfileOps::activate(store, b, nullptr); }
+    catch (const std::exception& e) { threw = std::string(e.what()).find("no usable zip for m5") != std::string::npos; }
+    check(threw && treeOf(addons) == before && !fs::exists(Config::dataDir() / "profiles" / "switch.json") &&
+          store.find(a)->active && !store.find(b)->active,
+          "a zip with a valid index but corrupt data fails the switch with AddOns unchanged and the old profile active");
+
+    // 2. A real failure halfway: rolled back, no plan left, old profile active and intact.
+    { auto st = StateStore::load(store.statePath(b)); st.remove(5); st.save(); }
+    ProfileOps::failSwitchAfterInstallsForTesting = 1;
+    threw = false;
+    try { ProfileOps::activate(store, b, nullptr); } catch (const std::exception&) { threw = true; }
+    ProfileOps::failSwitchAfterInstallsForTesting = -1;
+    check(threw && treeOf(addons) == before && !fs::exists(Config::dataDir() / "profiles" / "switch.json") &&
+          store.find(a)->active && ProfileStore::load().find(a)->active && noWamLeftovers(addons),
+          "a switch that fails halfway is rolled back to the old profile, and no plan is left to replay forever");
+    bool again = false;
+    try { ProfileOps::activate(store, b, nullptr); again = true; } catch (const std::exception&) {}
+    check(again && store.find(b)->active && readAll(addons / "Swap" / "Swap.toc") == "v2" && fs::exists(addons / "Good"),
+          "after a rolled-back switch, switching works again");
+    ProfileOps::activate(store, a, nullptr);
+
+    // 3. A crash leaves the plan; its zips and its profiles are protected until it is finished.
+    ProfileOps::crashSwitchAfterInstallsForTesting = 1;
+    bool crashed = false;
+    try { ProfileOps::activate(store, b, nullptr); } catch (...) { crashed = true; }
+    ProfileOps::crashSwitchAfterInstallsForTesting = -1;
+    bool removeRefused = false;
+    try { store.remove(b); } catch (const std::exception&) { removeRefused = true; }
+    const auto goodZip = AddonLibrary::zipFor(b, mk(4, 40));
+    { auto st = StateStore::load(store.statePath(b)); st.remove(4); st.save(); }
+    AddonLibrary::collectGarbage(store);
+    check(crashed && removeRefused && fs::exists(goodZip),
+          "while a switch is unfinished, its profiles cannot be removed and its zips are not collected");
+    restoreHome(workDir);
+}
+
+void testSwitchRollbackIsPrecise(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_precise");
+    const auto wow = home / "wow" / "_retail_";
+    const auto addons = wow / "Interface" / "AddOns";
+    Config cfg;
+    cfg.wow_path = wow.string();
+    cfg.save();
+    const auto zips = home / "zips";
+    fs::create_directories(zips);
+    buildZip(zips / "a.zip", {{"A/A.toc", "a"}});
+    buildZip(zips / "swap1.zip", {{"Swap/Swap.toc", "v1"}});
+    buildZip(zips / "swap2.zip", {{"Swap/Swap.toc", "v2"}});
+    buildZip(zips / "good.zip", {{"Good/Good.toc", "theirs"}});
+    auto mk = [](int64_t mod, int64_t file) { InstalledAddon x; x.modId = mod; x.fileId = file; x.displayName = "m" + std::to_string(mod); return x; };
+
+    auto store = ProfileStore::load();
+    const int64_t a = store.selectedId();
+    auto fill = [&](int64_t id, std::vector<std::pair<InstalledAddon, std::string>> list) {
+        auto st = StateStore::load(store.statePath(id));
+        for (auto& [x, zip] : list) {
+            x.folders = ProfileOps::placeZip(*store.find(id), x, zips / zip, {});
+            st.upsert(x);
+        }
+        st.save();
+    };
+    fill(a, {{mk(1, 10), "a.zip"}, {mk(3, 30), "swap1.zip"}});
+    const int64_t b = store.create("B"); // mod 3 first, then the zip that holds Good/
+    fill(b, {{mk(3, 31), "swap2.zip"}, {mk(4, 40), "good.zip"}});
+    const int64_t c = store.create("C"); // the zip that holds Good/ first
+    fill(c, {{mk(4, 40), "good.zip"}, {mk(3, 31), "swap2.zip"}});
+    writeFile(addons / "Good" / "mine.txt", "hand-installed");
+    writeFile(addons / "Swap" / "local.txt", "local edit");
+
+    auto fails = [&](int64_t id, int after) {
+        ProfileOps::failSwitchAfterInstallsForTesting = after;
+        bool threw = false;
+        try { ProfileOps::activate(store, id, nullptr); } catch (const std::exception&) { threw = true; }
+        ProfileOps::failSwitchAfterInstallsForTesting = -1;
+        return threw;
+    };
+    auto cleanedUp = [&] {
+        return !fs::exists(Config::dataDir() / "profiles" / "switch.json") &&
+               !fs::exists(Config::dataDir() / "profiles" / "switch-backup") && store.find(a)->active;
+    };
+
+    // The failing step comes before the one that would overwrite Good/.
+    check(fails(b, 1) && readAll(addons / "Good" / "mine.txt") == "hand-installed" &&
+          !fs::exists(addons / "Good" / "Good.toc") && readAll(addons / "A" / "A.toc") == "a" &&
+          readAll(addons / "Swap" / "Swap.toc") == "v1" && cleanedUp(),
+          "a rollback keeps an untracked folder that a later, never-started step would have overwritten");
+
+    // The step that overwrites Good/ ran, then a later step failed. (The first
+    // rollback did reinstall Swap, which its switch had replaced.)
+    writeFile(addons / "Swap" / "local.txt", "local edit");
+    check(fails(c, 1) && readAll(addons / "Good" / "mine.txt") == "hand-installed" &&
+          !fs::exists(addons / "Good" / "Good.toc") && readAll(addons / "A" / "A.toc") == "a" && cleanedUp(),
+          "a rollback restores an untracked folder that a started step overwrote");
+    check(readAll(addons / "Swap" / "local.txt") == "local edit" && readAll(addons / "Swap" / "Swap.toc") == "v1",
+          "a rollback leaves an old addon the switch never reached, with its local edits");
+
+    // The same switch without a failure commits and drops the backup.
+    ProfileOps::activate(store, c, nullptr);
+    check(readAll(addons / "Good" / "Good.toc") == "theirs" && !fs::exists(addons / "Good" / "mine.txt") &&
+          !fs::exists(Config::dataDir() / "profiles" / "switch-backup") && store.find(c)->active,
+          "a committed switch drops the backup of untracked folders it overwrote");
+    restoreHome(workDir);
+}
+
+void testSwitchRepairs(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_repairs");
+    const auto wow = home / "wow" / "_retail_";
+    const auto addons = wow / "Interface" / "AddOns";
+    Config cfg;
+    cfg.wow_path = wow.string();
+    cfg.save();
+    const auto zips = home / "zips";
+    fs::create_directories(zips);
+    buildZip(zips / "t.zip", {{"T/T.toc", "t"}});
+    buildZip(zips / "n.zip", {{"N/N.toc", "n"}});
+    buildBigCorruptZip(zips / "bad.zip");
+    auto mk = [](int64_t mod, int64_t file) { InstalledAddon x; x.modId = mod; x.fileId = file; x.displayName = "m" + std::to_string(mod); return x; };
+
+    auto store = ProfileStore::load();
+    const int64_t a = store.selectedId();
+    const int64_t b = store.create("B");
+    writeFile(addons / "Ad" / "Ad.toc", "adopted v1");
+    { auto st = StateStore::load(store.statePath(a)); InstalledAddon x = mk(5, 0); x.adopted = true; x.folders = {"Ad"}; st.upsert(x); st.save(); }
+    { auto st = StateStore::load(store.statePath(b)); auto x = mk(9, 90); x.folders = ProfileOps::placeZip(*store.find(b), x, zips / "t.zip", {}); st.upsert(x); st.save(); }
+
+    // A corrupt library zip is fetched again when a fetch is available.
+    const auto lib9 = AddonLibrary::zipFor(b, mk(9, 90));
+    fs::copy_file(zips / "bad.zip", lib9, fs::copy_options::overwrite_existing);
+    std::string message;
+    try { ProfileOps::activate(store, b, nullptr); } catch (const std::exception& e) { message = e.what(); }
+    check(message.find(lib9.string()) != std::string::npos && !store.find(b)->active,
+          "a corrupt library zip with no fetch fails the switch and names the file");
+    int fetches = 0;
+    ProfileOps::activate(store, b, [&](const InstalledAddon&, const fs::path& dest) {
+        ++fetches;
+        fs::copy_file(zips / "t.zip", dest, fs::copy_options::overwrite_existing);
+        return true;
+    });
+    check(fetches == 1 && store.find(b)->active && readAll(addons / "T" / "T.toc") == "t" &&
+          readAll(lib9) == readAll(zips / "t.zip"),
+          "a corrupt library zip is replaced by a fresh fetch");
+
+    // Edits to an adopted addon survive a round trip.
+    ProfileOps::activate(store, a, nullptr);
+    writeFile(addons / "Ad" / "Ad.toc", "adopted v2, edited");
+    ProfileOps::activate(store, b, nullptr);
+    ProfileOps::activate(store, a, nullptr);
+    check(readAll(addons / "Ad" / "Ad.toc") == "adopted v2, edited",
+          "switching away snapshots an adopted addon again, so hand edits come back");
+
+    // The flags were saved, then the process died before switch.json was deleted.
+    const auto planFile = Config::dataDir() / "profiles" / "switch.json";
+    nlohmann::json done{{"from", b}, {"to", a}, {"addonsDir", addons.string()}, {"wowPath", wow.string()},
+                        {"remove", std::vector<std::string>{"Ad"}}, {"install", nlohmann::json::array()}};
+    writeFile(planFile, done.dump());
+    bool finished = ProfileOps::recoverSwitch(store);
+    check(finished && !fs::exists(planFile) && fs::exists(addons / "Ad" / "Ad.toc") && store.find(a)->active,
+          "a plan whose target is already active is only deleted, not run again");
+
+    // A switch to a recovered profile that has no folder of its own yet.
+    writeFile(Config::dataDir() / "profiles.json", "{ damaged");
+    auto recovered = ProfileStore::load();
+    const int64_t r = recovered.selectedId();
+    nlohmann::json plan{{"from", int64_t{0}}, {"to", r}, {"addonsDir", addons.string()}, {"wowPath", wow.string()},
+                        {"remove", std::vector<std::string>{}}, {"removeBegun", false}, {"started", 0},
+                        {"install", nlohmann::json::array({nlohmann::json{{"modId", 8}, {"zip", (zips / "n.zip").string()},
+                                                                         {"replace", std::vector<std::string>{}},
+                                                                         {"folders", std::vector<std::string>{"N"}},
+                                                                         {"preexisting", false}}})}};
+    writeFile(planFile, plan.dump());
+    finished = ProfileOps::recoverSwitch(recovered);
+    check(finished && readAll(addons / "N" / "N.toc") == "n" && recovered.find(r)->active &&
+          recovered.find(r)->wowPath == wow.string() && !fs::exists(planFile),
+          "an unfinished switch to a profile with no folder is finished and gives it the plan's folder");
+    restoreHome(workDir);
+}
+
+void testDamagedProfileListIsNotCollected(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_peek");
+    Config cfg;
+    cfg.wow_path = (home / "wow" / "_retail_").string();
+    cfg.save();
+    auto store = ProfileStore::load();
+    const int64_t a = store.selectedId();
+    const int64_t b = store.create("B");
+    InstalledAddon x; x.modId = 7; x.fileId = 70; x.folders = {"X"};
+    auto st = StateStore::load(store.statePath(b));
+    st.upsert(x);
+    st.save();
+    const auto zip = AddonLibrary::zipFor(b, x);
+    writeFile(zip, "blocked download, cannot be fetched again");
+    const std::string damaged = R"({"addons":[{"modId":7,"fileId":)";
+    writeFile(store.statePath(b), damaged);
+    writeFile(AddonLibrary::dir() / "99" / "1.zip", "unused");
+
+    AddonLibrary::collectGarbage(store);
+    bool setAside = false;
+    for (auto& e : fs::directory_iterator(store.statePath(b).parent_path()))
+        if (e.path().filename().string().find("damaged") != std::string::npos) setAside = true;
+    check(readAll(store.statePath(b)) == damaged && !setAside && fs::exists(zip) && fs::exists(AddonLibrary::dir() / "99" / "1.zip"),
+          "an unreadable list of another profile stays where it is, and nothing in the library is deleted");
+    check(!StateStore::peek(store.statePath(b)).has_value() && StateStore::peek(store.statePath(a)).has_value() &&
+          StateStore::peek(home / "nothing.json")->empty(),
+          "peek reads without renaming: unreadable is nullopt, a missing file is empty");
+    restoreHome(workDir);
+}
+
+void testPlaceZipKeepsAdoptedSnapshotOnBadZip(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_place");
+    Config cfg;
+    cfg.wow_path = (home / "wow" / "_retail_").string();
+    cfg.save();
+    auto store = ProfileStore::load();
+    const Profile& p = store.selected();
+    InstalledAddon a; a.modId = 5; a.fileId = 0; a.adopted = true; a.folders = {"Ad"};
+    const auto dest = AddonLibrary::zipFor(p.id, a);
+    writeFile(dest, "the snapshot");
+    writeFile(home / "bad.zip", "not a zip");
+    bool threw = false;
+    try { ProfileOps::placeZip(p, a, home / "bad.zip", {}); } catch (const std::exception&) { threw = true; }
+    check(threw && readAll(dest) == "the snapshot", "a broken zip does not delete an adopted addon's snapshot");
+    buildZip(home / "new.zip", {{"Ad/Ad.toc", "new"}});
+    auto folders = ProfileOps::placeZip(p, a, home / "new.zip", {});
+    check(folders == std::vector<std::string>{"Ad"} && readAll(dest) == readAll(home / "new.zip"),
+          "a good zip replaces an adopted addon's snapshot");
+    restoreHome(workDir);
+}
+
+void testSetWowPathRules(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_path");
+    const auto wow = home / "wow" / "_retail_";
+    fs::create_directories(wow);
+    fs::create_symlink(home / "wow", home / "wowlink");
+    Config cfg;
+    cfg.wow_path = wow.string();
+    cfg.save();
+    auto store = ProfileStore::load();
+    const int64_t a = store.selectedId();
+    const int64_t b = store.create("B");
+    check(store.find(a)->active && store.activeFor((home / "wowlink" / "_retail_").string()) == store.find(a),
+          "a symlinked spelling of the folder is the same folder");
+
+    const auto moved = (home / "moved" / "_retail_").string();
+    store.setWowPath(a, moved);
+    check(store.find(a)->active && store.find(a)->wowPath == moved, "an active profile stays active when its folder moves and nobody else is there");
+
+    store.setWowPath(b, moved);
+    check(!store.find(b)->active && store.find(a)->active, "a profile pointed at a folder another profile is active on is inactive");
+
+    store.setWowPath(a, (home / "wowlink" / "_retail_").string());
+    store.setWowPath(b, wow.string());
+    check(store.find(a)->active && !store.find(b)->active, "pointing a profile at a symlinked spelling of another's active folder does not steal it");
+    restoreHome(workDir);
+}
+
+// When the active profile is pointed at another folder, a profile with
+// addons left on the old one is inactive and nobody manages that folder. Its
+// adopted addon has no zip, but activating must still work.
+void testProfileOnAFolderNobodyManages(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_back");
+    const auto wow = home / "wow" / "_retail_";
+    const auto addons = wow / "Interface" / "AddOns";
+    Config cfg;
+    cfg.wow_path = wow.string();
+    cfg.save();
+    writeFile(addons / "Adopted" / "Adopted.toc", "adopted by hand");
+
+    auto store = ProfileStore::load();
+    const int64_t first = store.selectedId();
+    const int64_t id = store.create("Other");
+    {
+        auto st = StateStore::load(store.statePath(id));
+        InstalledAddon a; a.modId = 5; a.adopted = true; a.displayName = "Adopted"; a.folders = {"Adopted"};
+        st.upsert(a);
+        st.save();
+    }
+    store.setWowPath(first, (home / "other").string());
+    const bool wasStuck = !store.find(id)->active && !store.activeFor(wow.string());
+
+    bool threw = false;
+    try { ProfileOps::activate(store, id, nullptr); } catch (const std::exception&) { threw = true; }
+    check(wasStuck && !threw && store.find(id)->active &&
+          readAll(addons / "Adopted" / "Adopted.toc") == "adopted by hand",
+          "a profile on a folder nobody manages can be activated, keeping its adopted addon");
+}
+
+void testProfileSwitching(const fs::path& workDir) {
+    auto home = freshHome(workDir, "profiles_switch");
+    const auto wow = home / "wow" / "_retail_";
+    const auto addons = wow / "Interface" / "AddOns";
+    Config cfg;
+    cfg.wow_path = wow.string() + "/"; // a trailing slash still names the same folder
+    cfg.save();
+
+    const auto zips = home / "zips";
+    fs::create_directories(zips);
+    buildZip(zips / "shared.zip", {{"Shared/Shared.toc", "shared"}});
+    buildZip(zips / "oldonly.zip", {{"OldOnly/OldOnly.toc", "old only"}});
+    buildZip(zips / "swap1.zip", {{"Swap/Swap.toc", "v1"}});
+    buildZip(zips / "swap2.zip", {{"Swap/Swap.toc", "v2"}, {"SwapExtra/SwapExtra.toc", "v2"}});
+    buildZip(zips / "target.zip", {{"TargetOnly/TargetOnly.toc", "target"}});
+    buildZip(zips / "legacy.zip", {{"Legacy/Legacy.toc", "legacy"}});
+
+    auto mk = [](int64_t mod, int64_t file, const std::string& name) {
+        InstalledAddon a; a.modId = mod; a.fileId = file; a.displayName = name; return a;
+    };
+
+    // Before profiles: one addon installed the old way, so the library has no zip for it.
+    auto legacyAddon = mk(6, 60, "Legacy");
+    legacyAddon.folders = AddonInstaller::installZip(zips / "legacy.zip", addons);
+    { auto st = StateStore::load(); st.upsert(legacyAddon); st.save(); }
+
+    auto store = ProfileStore::load();
+    const int64_t a = store.selectedId();
+    {
+        auto st = StateStore::load(store.statePath(a));
+        auto place = [&](InstalledAddon x, const std::string& zip) {
+            x.folders = ProfileOps::placeZip(*store.find(a), x, zips / zip, {});
+            st.upsert(x);
+        };
+        place(mk(1, 10, "Shared"), "shared.zip");
+        place(mk(2, 20, "OldOnly"), "oldonly.zip");
+        place(mk(3, 30, "Swap"), "swap1.zip");
+        // Adopted from a folder the user put there; no zip anywhere.
+        writeFile(addons / "Adopted" / "Adopted.toc", "adopted by hand");
+        auto adopted = mk(5, 0, "Adopted"); adopted.adopted = true; adopted.folders = {"Adopted"};
+        st.upsert(adopted);
+        st.save();
+    }
+    writeFile(addons / "Shared" / "marker.txt", "settings the user made");
+    writeFile(addons / "Untracked" / "Untracked.toc", "not ours");
+
+    const int64_t b = store.create("Raid");
+    {
+        auto st = StateStore::load(store.statePath(b));
+        auto place = [&](InstalledAddon x, const std::string& zip) {
+            x.folders = ProfileOps::placeZip(*store.find(b), x, zips / zip, {});
+            st.upsert(x);
+            return x.folders;
+        };
+        place(mk(1, 10, "Shared"), "shared.zip");
+        place(mk(3, 31, "Swap"), "swap2.zip");
+        auto targetFolders = place(mk(4, 40, "TargetOnly"), "target.zip");
+        st.save();
+        check(targetFolders == std::vector<std::string>{"TargetOnly"} && !fs::exists(addons / "TargetOnly") &&
+              fs::exists(AddonLibrary::dir() / "4" / "40.zip") && readAll(addons / "Swap" / "Swap.toc") == "v1",
+              "placeZip on an inactive profile stores the zip, returns its folders and leaves AddOns alone");
+    }
+
+    ProfileOps::activate(store, b, nullptr);
+    check(readAll(addons / "Shared" / "marker.txt") == "settings the user made" &&
+          !fs::exists(addons / "OldOnly") && !fs::exists(addons / "Adopted") && !fs::exists(addons / "Legacy") &&
+          readAll(addons / "TargetOnly" / "TargetOnly.toc") == "target" &&
+          readAll(addons / "Swap" / "Swap.toc") == "v2" && fs::exists(addons / "SwapExtra") &&
+          fs::exists(addons / "Untracked") && noWamLeftovers(addons),
+          "switching keeps a shared addon at the same file untouched, removes, installs and swaps the rest, and leaves untracked folders alone");
+    check(store.find(b)->active && !store.find(a)->active && ProfileStore::load().find(b)->active &&
+          StateStore::load(store.statePath(b)).find(3)->folders == std::vector<std::string>{"Swap", "SwapExtra"} &&
+          !fs::exists(Config::dataDir() / "profiles" / "switch.json"),
+          "after a switch the target is active on disk, records the installed folders, and no plan is left");
+
+    ProfileOps::activate(store, a, nullptr);
+    check(readAll(addons / "Adopted" / "Adopted.toc") == "adopted by hand" &&
+          readAll(addons / "Legacy" / "Legacy.toc") == "legacy" &&
+          readAll(addons / "OldOnly" / "OldOnly.toc") == "old only" &&
+          readAll(addons / "Swap" / "Swap.toc") == "v1" && !fs::exists(addons / "SwapExtra") &&
+          !fs::exists(addons / "TargetOnly") && readAll(addons / "Shared" / "marker.txt") == "settings the user made",
+          "switching back restores adopted and pre-profile addons from their snapshots");
+
+    // A zip the library lost and cannot fetch again stops the switch before AddOns changes.
+    { auto st = StateStore::load(store.statePath(b)); st.upsert(mk(7, 70, "Gone")); st.save(); }
+    const std::string before = treeOf(addons);
+    std::string message;
+    try {
+        ProfileOps::activate(store, b, [](const InstalledAddon&, const fs::path&) { return false; });
+    } catch (const std::exception& e) { message = e.what(); }
+    check(message.find("Gone") != std::string::npos && treeOf(addons) == before &&
+          store.find(a)->active && !fs::exists(Config::dataDir() / "profiles" / "switch.json"),
+          "a missing zip that cannot be fetched fails the switch, names the addon and leaves AddOns unchanged");
+
+    // A switch interrupted halfway is finished by recoverSwitch.
+    auto fetchGone = [&](const InstalledAddon&, const fs::path& dest) {
+        buildZip(dest, {{"Gone/Gone.toc", "fetched"}});
+        return true;
+    };
+    AddonInstaller::failAfterInstalledForTesting = 0;
+    bool threw = false;
+    try { ProfileOps::activate(store, b, fetchGone); } catch (const std::exception&) { threw = true; }
+    AddonInstaller::failAfterInstalledForTesting = -1;
+    const bool planLeft = fs::exists(Config::dataDir() / "profiles" / "switch.json");
+    auto reloaded = ProfileStore::load(); // as the next start would
+    const bool finished = ProfileOps::recoverSwitch(reloaded);
+    check(threw && planLeft && finished && reloaded.find(b)->active && !reloaded.find(a)->active &&
+          readAll(addons / "Gone" / "Gone.toc") == "fetched" && fs::exists(addons / "TargetOnly") &&
+          !fs::exists(addons / "OldOnly") && readAll(addons / "Shared" / "marker.txt") == "settings the user made" &&
+          !fs::exists(Config::dataDir() / "profiles" / "switch.json") && !ProfileOps::recoverSwitch(reloaded),
+          "an interrupted switch leaves its plan, and recoverSwitch finishes it on the next start");
+
+    // Removing: never the active one, never the last one; then unused zips go.
+    store = ProfileStore::load();
+    bool refusedActive = false;
+    try { store.remove(b); } catch (const std::exception&) { refusedActive = true; }
+    ProfileOps::activate(store, a, nullptr);
+    writeFile(AddonLibrary::dir() / "99" / "1.zip", "stray");
+    store.remove(b);
+    bool refusedLast = false;
+    try { store.remove(a); } catch (const std::exception&) { refusedLast = true; }
+    const auto lib = AddonLibrary::dir();
+    check(refusedActive && refusedLast && ProfileStore::load().all().size() == 1 &&
+          !fs::exists(Config::dataDir() / "profiles" / std::to_string(b)),
+          "remove refuses the active and the last profile, and deletes an inactive one");
+    check(fs::exists(lib / "1" / "10.zip") && fs::exists(lib / "3" / "30.zip") &&
+          fs::exists(lib / "5" / ("adopted-" + std::to_string(a) + ".zip")) && fs::exists(lib / "6" / "60.zip") &&
+          !fs::exists(lib / "3" / "31.zip") && !fs::exists(lib / "4") && !fs::exists(lib / "99"),
+          "removing a profile keeps zips other profiles use and deletes the rest");
+    restoreHome(workDir);
+}
+
 } // namespace
 
 int main() {
@@ -796,6 +1363,32 @@ int main() {
     testConfigKeepsTheKeyPrivate(workDir);
     testDamagedStateIsSetAside(workDir);
     testHttpIsHttpsOnly();
+    testListZipFolders(workDir);
+    testProfilesMigrateOldState(workDir);
+    try {
+        testProfileSwitching(workDir);
+    } catch (const std::exception& e) {
+        check(false, std::string("profile switching threw: ") + e.what());
+    }
+    testProfileOnAFolderNobodyManages(workDir);
+    try {
+        testFailedSwitchDoesNotGetStuck(workDir);
+    } catch (const std::exception& e) {
+        check(false, std::string("testFailedSwitchDoesNotGetStuck threw: ") + e.what());
+    }
+    try {
+        testSwitchRollbackIsPrecise(workDir);
+    } catch (const std::exception& e) {
+        check(false, std::string("testSwitchRollbackIsPrecise threw: ") + e.what());
+    }
+    try {
+        testSwitchRepairs(workDir);
+    } catch (const std::exception& e) {
+        check(false, std::string("testSwitchRepairs threw: ") + e.what());
+    }
+    testDamagedProfileListIsNotCollected(workDir);
+    testPlaceZipKeepsAdoptedSnapshotOnBadZip(workDir);
+    testSetWowPathRules(workDir);
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     fs::remove_all(workDir);

@@ -46,6 +46,12 @@ public:
     // A file that cannot be read is moved aside (see damagedFile) and the
     // store starts empty, so the next save cannot overwrite what it held.
     static StateStore load();
+    // Same, for another file (a profile's profiles/<id>/installed.json).
+    static StateStore load(const std::filesystem::path& path);
+    // Reads the addons in `path` without changing anything on disk: for
+    // counts and checks on profiles nobody is editing. A missing file is an
+    // empty list; one that cannot be read is nullopt and stays where it is.
+    static std::optional<std::vector<InstalledAddon>> peek(const std::filesystem::path& path);
     void save() const; // atomic: a crash leaves the old file or the new one
 
     // Where an unreadable installed.json was moved by load(); empty if it
