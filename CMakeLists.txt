@@ -66,7 +66,7 @@ if(WAM_BUILD_GUI)
     # WAM_QML_DIR dev mode, so list a new singleton in both.
     set(WAM_QML_FILES
         Main AddonDetails AddonIcon AddonMeta AddonRow AppColors AuthorLine ChangelogBox FieldNote FolderChip
-        InstallDialog InstalledPage ProfileNameDialog ProfileTabs ScanDialog SearchPage SettingsPage StyledPage
+        InstallDialog InstalledPage ListRowBackground NativeRowBackground ProfileNameDialog ProfileTabs ScanDialog SearchPage SettingsPage StyledPage
         UpdatesDialog)
     set(WAM_QML_SOURCES)
     foreach(f ${WAM_QML_FILES})

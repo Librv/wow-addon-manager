@@ -53,6 +53,7 @@ Kirigami.Dialog {
 
         delegate: QQC2.ItemDelegate {
             id: row
+            background: ListRowBackground { control: row }
             required property var modId
             required property string name
             required property string iconUrl

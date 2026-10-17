@@ -43,6 +43,8 @@ StyledPage {
                 spacing: 0
 
                 QQC2.ItemDelegate {
+                    id: resultRow
+                    background: ListRowBackground { control: resultRow }
                     Layout.fillWidth: true
                     // The same space above the title as below the description.
                     topPadding: Kirigami.Units.largeSpacing

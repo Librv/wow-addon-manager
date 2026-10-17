@@ -31,7 +31,9 @@ Item {
         spacing: 0
 
         QQC2.ItemDelegate {
+            id: header
             Layout.fillWidth: true
+            background: ListRowBackground { control: header }
             // The same space above the title as below the description.
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing
@@ -72,25 +74,33 @@ Item {
                 }
                 QQC2.ToolButton {
                     icon.name: "overflow-menu"
-                    onClicked: rowMenu.open()
-                    QQC2.Menu {
-                        id: rowMenu
-                        QQC2.MenuItem { text: qsTr("Remove…"); onTriggered: root.removeRequested() }
-                        QQC2.MenuItem { text: qsTr("Stop tracking (keep files)"); onTriggered: root.stopTrackingRequested() }
+                    // The menu is built on first use: one per row adds up.
+                    onClicked: { menuLoader.active = true; menuLoader.item.open() }
+                    Loader {
+                        id: menuLoader
+                        active: false
+                        sourceComponent: QQC2.Menu {
+                            QQC2.MenuItem { text: qsTr("Remove…"); onTriggered: root.removeRequested() }
+                            QQC2.MenuItem { text: qsTr("Stop tracking (keep files)"); onTriggered: root.stopTrackingRequested() }
+                        }
                     }
                 }
             }
         }
 
-        AddonDetails {
-            visible: root.open
-            addon: root.model
-            changelogOpen: root.changelogOpen
-            onChangelogToggleRequested: root.changelogToggleRequested()
+        // Built only while open: the details are heavy and most rows are closed.
+        Loader {
+            active: root.open
+            visible: active
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.iconSizes.large + Kirigami.Units.largeSpacing * 2
             Layout.rightMargin: Kirigami.Units.largeSpacing
             Layout.bottomMargin: Kirigami.Units.largeSpacing
+            sourceComponent: AddonDetails {
+                addon: root.model
+                changelogOpen: root.changelogOpen
+                onChangelogToggleRequested: root.changelogToggleRequested()
+            }
         }
 
         Kirigami.Separator { Layout.fillWidth: true }
