@@ -192,6 +192,10 @@ measure() {
     local cfg=$WORK/xdg-config data=$WORK/xdg-data rt=$WORK/xdg-runtime home=$WORK/home
     rm -rf "$cfg" "$data" "$rt" "$home"; mkdir -p "$cfg" "$data" "$home"; mkdir -m 700 "$rt"
     [ "$SEED" -gt 0 ] && seed_state "$SEED" "$cfg" "$data"
+    # Bring the desktop's colour scheme along: without it the app gets KDE's light
+    # default text on its fixed dark surfaces, and the theme is not what users run.
+    local kg=${XDG_CONFIG_HOME:-$HOME/.config}/kdeglobals
+    [ -f "$kg" ] && cp "$kg" "$cfg/"
     # Isolated state, so the real ~/.config/wow-addon-manager is never read or written.
     local envs=(HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_DATA_HOME="$data" XDG_RUNTIME_DIR="$rt")
     local bin max
