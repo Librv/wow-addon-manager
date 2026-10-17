@@ -1056,6 +1056,14 @@ void testSwitchRepairs(const fs::path& workDir) {
     check(readAll(addons / "Ad" / "Ad.toc") == "adopted v2, edited",
           "switching away snapshots an adopted addon again, so hand edits come back");
 
+    // A snapshot that fails must stop the switch, not fall back to the older one.
+    writeFile(addons / "Ad" / "Notes..bak", "unsaved edit");
+    message.clear();
+    try { ProfileOps::activate(store, b, nullptr); } catch (const std::exception& e) { message = e.what(); }
+    check(!message.empty() && store.find(a)->active && readAll(addons / "Ad" / "Notes..bak") == "unsaved edit",
+          "a failed snapshot of an adopted addon stops the switch and keeps the folder");
+    fs::remove(addons / "Ad" / "Notes..bak");
+
     // The flags were saved, then the process died before switch.json was deleted.
     const auto planFile = Config::dataDir() / "profiles" / "switch.json";
     nlohmann::json done{{"from", b}, {"to", a}, {"addonsDir", addons.string()}, {"wowPath", wow.string()},

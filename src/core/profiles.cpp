@@ -657,8 +657,10 @@ void ProfileOps::activate(ProfileStore& profiles, int64_t targetId, const FetchF
         if (folders.empty()) continue;
         try {
             AddonLibrary::snapshot(addonsDir, folders, zip); // temp file + rename
-        } catch (const std::exception&) {
-            if (!fs::exists(zip)) throw; // an older copy is better than none
+        } catch (const std::exception& e) {
+            // No fallback to an older snapshot: the folder may be removed below, losing its newer edits.
+            throw std::runtime_error("cannot switch to '" + target->name + "': " + e.what() +
+                                     ". Nothing in the WoW folder was changed.");
         }
     }
 
