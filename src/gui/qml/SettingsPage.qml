@@ -63,7 +63,7 @@ StyledPage {
         RowLayout {
             Kirigami.FormData.label: qsTr("WoW folder:")
             QQC2.TextField { id: pathField; text: wam.wowPath; Layout.preferredWidth: Kirigami.Units.gridUnit * 20 }
-            QQC2.Button { text: qsTr("Browse…"); onClicked: folderDialog.open() }
+            QQC2.Button { text: qsTr("Browse…"); onClicked: { folderLoader.active = true; folderLoader.item.open() } }
             QQC2.Button {
                 text: qsTr("Save")
                 enabled: pathField.text.length > 0 && pathField.text !== wam.wowPath
@@ -149,8 +149,12 @@ StyledPage {
         }
     }
 
-    FolderDialog {
-        id: folderDialog
-        onAccepted: pathField.text = wam.localPath(selectedFolder)
+    // Built on first use: the dialog implementation is heavy and rarely needed.
+    Loader {
+        id: folderLoader
+        active: false
+        sourceComponent: FolderDialog {
+            onAccepted: pathField.text = wam.localPath(selectedFolder)
+        }
     }
 }

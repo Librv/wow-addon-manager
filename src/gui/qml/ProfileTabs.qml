@@ -44,8 +44,10 @@ Rectangle {
     }
     function openMenu(profile, item) {
         target = profile
-        menu.popup(item)
+        dialogOf(menuLoader).popup(item)
     }
+    // Menu and dialogs are built on first use; each is only needed on demand.
+    function dialogOf(loader) { loader.active = true; return loader.item }
 
     Rectangle { // the edge line against the page
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
@@ -161,7 +163,7 @@ Rectangle {
             QQC2.ToolTip.visible: hovered
             QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
             QQC2.ToolTip.text: text
-            onClicked: nameDialog.openNew()
+            onClicked: bar.dialogOf(nameLoader).openNew()
         }
 
         Item { Layout.fillWidth: true }
@@ -179,30 +181,44 @@ Rectangle {
         }
     }
 
-    QQC2.Menu {
-        id: menu
-        QQC2.MenuItem {
-            text: qsTr("Rename…")
-            icon.name: "edit-rename"
-            onTriggered: nameDialog.openRename(bar.target.id, bar.target.name)
-        }
-        QQC2.MenuItem {
-            text: qsTr("Delete…")
-            icon.name: "edit-delete"
-            // The active profile's addons are in the game folder, and there is always one profile.
-            enabled: !bar.target.active && wam.profiles.length > 1
-            onTriggered: { deleteDialog.target = bar.target; deleteDialog.open() }
+    Loader {
+        id: menuLoader
+        active: false
+        sourceComponent: QQC2.Menu {
+            QQC2.MenuItem {
+                text: qsTr("Rename…")
+                icon.name: "edit-rename"
+                onTriggered: bar.dialogOf(nameLoader).openRename(bar.target.id, bar.target.name)
+            }
+            QQC2.MenuItem {
+                text: qsTr("Delete…")
+                icon.name: "edit-delete"
+                // The active profile's addons are in the game folder, and there is always one profile.
+                enabled: !bar.target.active && wam.profiles.length > 1
+                onTriggered: {
+                    const d = bar.dialogOf(deleteLoader)
+                    d.target = bar.target
+                    d.open()
+                }
+            }
         }
     }
 
-    ProfileNameDialog { id: nameDialog }
+    Loader {
+        id: nameLoader
+        active: false
+        sourceComponent: ProfileNameDialog {}
+    }
 
-    Kirigami.PromptDialog {
-        id: deleteDialog
-        property var target: ({ id: -1, name: "" })
-        title: qsTr("Delete %1?").arg(target.name)
-        subtitle: qsTr("This deletes the profile and its addon list. The game's AddOns folder is not touched.")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: wam.deleteProfile(target.id)
+    Loader {
+        id: deleteLoader
+        active: false
+        sourceComponent: Kirigami.PromptDialog {
+            property var target: ({ id: -1, name: "" })
+            title: qsTr("Delete %1?").arg(target.name)
+            subtitle: qsTr("This deletes the profile and its addon list. The game's AddOns folder is not touched.")
+            standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+            onAccepted: wam.deleteProfile(target.id)
+        }
     }
 }

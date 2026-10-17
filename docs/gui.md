@@ -12,6 +12,7 @@ touches one file.
 | `ProfileNameDialog.qml` | the name dialog behind **New profile…** and **Rename…** |
 | `InstalledPage.qml` | the AddOns page: toolbar, list, remove dialog, which rows and changelogs are open |
 | `AddonRow.qml` | one installed addon: header line; raises signals, owns no state |
+| `ListRowBackground.qml`, `NativeRowBackground.qml` | hover-only row highlight for list rows (see Conventions); the second holds the private style import |
 | `AddonDetails.qml` | the expandable details (facts, folders, changelog, buttons) |
 | `ChangelogBox.qml` | markdown changelog on a darker panel, with the inline "Show more" |
 | `AppColors.qml` | the colour palette singleton (page background, inset field colour, border) |
@@ -74,6 +75,17 @@ How a profile change reaches the pages:
 - `InstalledPage` keeps a placeholder of each row's last known height and
   loads the real `AddonRow` only near the viewport. That keeps the scrollbar
   exact while rows open and close.
+- List rows (`AddonRow`, Search results, the scan list) set
+  `background: ListRowBackground { control: <the delegate> }`. The desktop
+  style paints a full-row image per row, about 1 MB each, so the native
+  highlight is created only while a row is hovered, pressed or focused. If it
+  cannot load, a plain tint shows. See `docs/decisions/0009-paint-row-highlights-on-hover.md`.
+- Heavy per-row parts are created on demand: `AddonDetails` while the row is
+  open, the row menu on first click.
+- Dialogs are created on first use: each sits in a `Loader { active: false }`
+  and is opened through a `dialogOf(loader)` helper (`Main.qml`, `ProfileTabs.qml`,
+  `SettingsPage.qml`); see `docs/ram-testing.md` for what that saves. A dialog must
+  read the model state when it opens, not rely on listening before then.
 - `AddonDetails` receives the list row as `addon`, so a new model role is
   usable there as `addon.<role>`.
 
