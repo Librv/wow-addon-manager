@@ -25,6 +25,7 @@ namespace wam::gui {
 class WamController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool hasApiKey READ hasApiKey NOTIFY configChanged)
+    // The WoW folder and its flavor are the selected profile's.
     Q_PROPERTY(bool hasWowPath READ hasWowPath NOTIFY configChanged)
     Q_PROPERTY(QString wowPath READ wowPath NOTIFY configChanged)
     Q_PROPERTY(qint64 wowFlavorId READ wowFlavorId NOTIFY configChanged)     // 0 = not known
@@ -38,6 +39,11 @@ class WamController : public QObject {
     Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
     Q_PROPERTY(QVariantList flavors READ flavors NOTIFY flavorsChanged)   // [{id, name}, ...]
     Q_PROPERTY(bool checkingUpdates READ checkingUpdates NOTIFY checkingUpdatesChanged)
+    // [{id, name, active, wowPath ("" if unset), flavorName ("" if unknown), addonCount}, ...]
+    Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
+    Q_PROPERTY(qint64 currentProfileId READ currentProfileId NOTIFY profilesChanged)
+    Q_PROPERTY(bool currentProfileActive READ currentProfileActive NOTIFY profilesChanged)
+    Q_PROPERTY(bool activatingProfile READ activatingProfile NOTIFY activatingProfileChanged)
 
 public:
     explicit WamController(QObject* parent = nullptr);
@@ -57,6 +63,10 @@ public:
     ScanResultsModel* scanResults() { return &scanResults_; }
     bool scanning() const { return scanning_; }
     QVariantList flavors() const;
+    QVariantList profiles() const { return profiles_; }
+    qint64 currentProfileId() const { return currentProfileId_; }
+    bool currentProfileActive() const;
+    bool activatingProfile() const { return activating_; }
 
     // Flavors offered in the install dialog for a search result: the ones the
     // mod has files for, plus the WoW folder's own flavor so it can always be
@@ -98,12 +108,23 @@ public slots:
     void removeAddon(qint64 modId);
     void untrackAddon(qint64 modId);
 
+    // Profiles. Selecting one reloads the addon list and clears the update
+    // queue and scan results, which belonged to the previous profile.
+    void selectProfile(qint64 id);
+    void createProfile(const QString& name); // the new profile becomes selected
+    void renameProfile(qint64 id, const QString& name);
+    void deleteProfile(qint64 id);
+    void activateProfile(qint64 id); // see activatingProfile and profileActivated
+
 signals:
     void configChanged();
     void flavorsChanged();
     void scanningChanged();
     void adopted(qint64 modId, const QString& name, int folderCount);
     void checkingUpdatesChanged();
+    void profilesChanged(); // also when the selected profile changes
+    void activatingProfileChanged();
+    void profileActivated(qint64 id, const QString& name);
     void addonUpToDate(qint64 modId, const QString& name);  // result of checkUpdate(modId)
     void updateFound(qint64 modId);                         // ... or an update was queued for it
     void linked(qint64 modId, const QString& name);    void updateCheckFinished(int available);
@@ -135,6 +156,9 @@ private:
     bool hasWowPath_ = false;
     bool checking_ = false;
     bool scanning_ = false;
+    bool activating_ = false;
+    QVariantList profiles_;
+    qint64 currentProfileId_ = 0; // the profile the models show; 0 until the worker reports
     QString wowPath_;
     qint64 wowFlavorId_ = 0;
     QString wowFlavorName_;

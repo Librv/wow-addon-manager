@@ -25,6 +25,16 @@ Kirigami.ApplicationWindow {
     // tab switch. Caching also keeps each page's state (search text, results).
     Kirigami.PagePool { id: mainPagePool }
 
+    // The profile tabs sit across the top of the page area, beside the sidebar
+    // (the window's content item already leaves room for it). The page stack
+    // keeps filling the rest, just pushed down below the tabs.
+    ProfileTabs {
+        id: profileTabs
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        z: 1
+    }
+    pageStack.anchors.topMargin: profileTabs.height
+
     function showPage(file) {
         const page = mainPagePool.loadPage(Qt.resolvedUrl(file))
         if (pageStack.currentItem !== page) {
@@ -49,6 +59,9 @@ Kirigami.ApplicationWindow {
         }
     }
     function reviewUpdates() { updatesDialog.open() }
+    function activateProfile() {
+        if (!wam.activatingProfile) wam.activateProfile(wam.currentProfileId)
+    }
     function pickZip(modId, fileId) {
         manualTarget = { modId: modId, fileId: fileId }
         zipDialog.open()
@@ -102,6 +115,7 @@ Kirigami.ApplicationWindow {
             blockedDialog.info = { modId: modId, modName: modName, modSlug: modSlug, fileId: fileId, fileName: fileName }
             blockedDialog.open()
         }
+        function onProfileActivated(id, name) { root.showPassiveNotification(qsTr("%1 is now active").arg(name)) }
         function onUpdateCheckFinished(available) {
             if (available > 0) updatesDialog.open()
             else root.showPassiveNotification(qsTr("All addons are up to date"))

@@ -84,8 +84,12 @@ std::string nowIso8601() {
 }
 
 StateStore StateStore::load() {
+    return load(Config::dataDir() / "installed.json");
+}
+
+StateStore StateStore::load(const fs::path& path) {
     StateStore store;
-    store.path_ = Config::dataDir() / "installed.json";
+    store.path_ = path;
     if (!fs::exists(store.path_)) return store;
 
     try {
@@ -104,6 +108,21 @@ StateStore StateStore::load() {
         store.addons_.clear();
     }
     return store;
+}
+
+std::optional<std::vector<InstalledAddon>> StateStore::peek(const fs::path& path) {
+    std::vector<InstalledAddon> out;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return out;
+    try {
+        std::ifstream in(path);
+        json j;
+        in >> j;
+        for (const auto& item : j.at("addons")) out.push_back(fromJson(item));
+    } catch (const json::exception&) {
+        return std::nullopt;
+    }
+    return out;
 }
 
 void StateStore::save() const {

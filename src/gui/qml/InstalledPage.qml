@@ -48,7 +48,26 @@ StyledPage {
         else if (height > collapsedHeight) collapsedHeight = height
     }
 
+    // An inactive profile is edited in the library only; nothing reaches the
+    // game folder until it is set as the active profile.
+    readonly property bool inactive: wam.profiles.length > 0 && !wam.currentProfileActive
+
+    header: Kirigami.InlineMessage {
+        visible: page.inactive
+        type: Kirigami.MessageType.Information
+        position: Kirigami.InlineMessage.Position.Header
+        text: qsTr("This profile is not active. Changes are saved and applied when you set it as the active profile.")
+    }
+
     actions: [
+        Kirigami.Action {
+            // Stays visible while switching, so the progress shows where the click was.
+            visible: (page.inactive && wam.hasWowPath) || wam.activatingProfile
+            enabled: !wam.activatingProfile
+            text: wam.activatingProfile ? qsTr("Switching…") : qsTr("Set active profile")
+            icon.name: "checkmark"
+            onTriggered: page.win.activateProfile()
+        },
         Kirigami.Action {
             text: qsTr("Check for updates")
             icon.name: "view-refresh"
@@ -64,7 +83,8 @@ StyledPage {
         Kirigami.Action {
             text: qsTr("Scan for existing addons")
             icon.name: "folder-search"
-            enabled: wam.hasWowPath
+            // Scanning reads the game folder, which holds the active profile's addons.
+            enabled: wam.hasWowPath && !page.inactive
             onTriggered: page.win.openScan()
         }
     ]
@@ -150,12 +170,20 @@ StyledPage {
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.gridUnit * 4
             visible: list.count === 0
-            text: wam.hasWowPath ? qsTr("No addons tracked yet") : qsTr("Set your WoW folder first")
-            explanation: wam.hasWowPath ? qsTr("Already have addons installed? Scan your AddOns folder to start tracking them.") : ""
+            text: !wam.hasWowPath ? qsTr("Set your WoW folder first")
+                : page.inactive ? qsTr("No addons in this profile yet")
+                : qsTr("No addons tracked yet")
+            explanation: !wam.hasWowPath ? ""
+                : page.inactive ? qsTr("Search for addons to add them to this profile.")
+                : qsTr("Already have addons installed? Scan your AddOns folder to start tracking them.")
             helpfulAction: Kirigami.Action {
-                text: wam.hasWowPath ? qsTr("Scan for existing addons") : qsTr("Open settings")
-                icon.name: wam.hasWowPath ? "folder-search" : "configure"
-                onTriggered: wam.hasWowPath ? page.win.openScan() : page.win.showSettings()
+                text: !wam.hasWowPath ? qsTr("Open settings")
+                    : page.inactive ? qsTr("Search")
+                    : qsTr("Scan for existing addons")
+                icon.name: !wam.hasWowPath ? "configure" : page.inactive ? "system-search" : "folder-search"
+                onTriggered: !wam.hasWowPath ? page.win.showSettings()
+                    : page.inactive ? page.win.showSearch("")
+                    : page.win.openScan()
             }
         }
     }

@@ -18,6 +18,10 @@ public:
     static std::vector<std::string> extractZip(const std::filesystem::path& zipPath,
                                                 const std::filesystem::path& destDir);
 
+    // The top-level folder set extractZip would write, without extracting.
+    // Same guards: throws on entries that could escape, or on no folders.
+    static std::vector<std::string> listZipFolders(const std::filesystem::path& zipPath);
+
     // Transactional install/update. The zip is fully extracted into a staging
     // folder next to the addons (<addonsDir>/.wam-staging) first; if that
     // fails, addonsDir has not been touched. Only then are the old folders
@@ -49,6 +53,10 @@ public:
     // are not a single plain path component (e.g. "../x") are skipped.
     static void removeFolders(const std::filesystem::path& addonsDir,
                                const std::vector<std::string>& folders);
+
+    // A folder name safe to join onto addonsDir: one plain path component,
+    // no "..", and not one of the installer's own ".wam-" folders.
+    static bool isSafeFolderName(const std::string& name);
 
     // Test seam: when >= 0, installZip throws after that many staged folders
     // have been renamed into place, to exercise rollback deterministically.

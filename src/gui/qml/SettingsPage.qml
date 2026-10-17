@@ -5,7 +5,33 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 StyledPage {
+    id: page
     title: qsTr("Settings")
+
+    // The WoW folder and flavor below belong to the current profile (its tab).
+    readonly property string profileName: {
+        const p = wam.profiles
+        for (let i = 0; i < p.length; ++i)
+            if (p[i].id === wam.currentProfileId) return p[i].name
+        return ""
+    }
+    property var shownProfileId: -1 // the profile pathField was last filled from; not a binding
+
+    // Typing in the folder field breaks its binding; another tab's profile
+    // brings its own folder and flavor, so show those again.
+    Connections {
+        target: wam
+        // profilesChanged also fires after installs and removals (addon
+        // counts), so only reset the path when the tab changed: a path the
+        // user is typing would be lost otherwise.
+        function onProfilesChanged() {
+            if (page.shownProfileId !== wam.currentProfileId) {
+                page.shownProfileId = wam.currentProfileId
+                pathField.text = wam.wowPath
+            }
+            flavorBox.currentIndex = flavorBox.indexOfFlavor()
+        }
+    }
 
     Kirigami.FormLayout {
         RowLayout {
@@ -24,6 +50,14 @@ StyledPage {
         }
         FieldNote {
             text: qsTr("Needed to search, install and update. Scanning your folder, adopting and removing addons work without it.")
+        }
+
+        Kirigami.Separator {
+            Kirigami.FormData.isSection: true
+            Kirigami.FormData.label: page.profileName.length > 0 ? qsTr("Profile: %1").arg(page.profileName) : qsTr("Profile")
+        }
+        FieldNote {
+            text: qsTr("Each profile has its own WoW folder and flavor. Switch profiles with the tabs at the top. The API key above is shared by all profiles.")
         }
 
         RowLayout {

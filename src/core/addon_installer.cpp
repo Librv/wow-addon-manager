@@ -21,19 +21,7 @@ std::string topLevelFolder(const std::string& entryName) {
     return entryName.substr(0, pos);
 }
 
-// A folder name we are willing to join onto addonsDir and rename/delete:
-// exactly one plain path component, and never one of our own ".wam-" dirs.
-bool isSafeFolderName(const std::string& name) {
-    return !name.empty() && name != "." &&
-           name.find("..") == std::string::npos &&
-           name.find('/') == std::string::npos &&
-           name.find('\\') == std::string::npos &&
-           name.rfind(".wam-", 0) != 0;
-}
-
-} // namespace
-
-std::vector<std::string> AddonInstaller::extractZip(const fs::path& zipPath, const fs::path& destDir) {
+zip_t* openZip(const fs::path& zipPath) {
     int errCode = 0;
     zip_t* archive = zip_open(zipPath.string().c_str(), ZIP_RDONLY, &errCode);
     if (!archive) {
@@ -43,24 +31,64 @@ std::vector<std::string> AddonInstaller::extractZip(const fs::path& zipPath, con
         zip_error_fini(&ze);
         throw std::runtime_error("failed to open addon zip '" + zipPath.string() + "': " + msg);
     }
+    return archive;
+}
+
+// The entry name at index i, empty to skip it. Throws (closing archive) on
+// zip-slip: any entry that escapes the destination, either via ".." or by
+// being an absolute path (path / "/abs" discards the left-hand side).
+std::string checkedEntryName(zip_t* archive, zip_int64_t i) {
+    const char* rawName = zip_get_name(archive, i, 0);
+    if (!rawName) return {};
+    std::string name(rawName);
+    if (name.empty()) return {};
+    if (name.find("..") != std::string::npos || name.front() == '/') {
+        zip_close(archive);
+        throw std::runtime_error("addon zip contains unsafe path entry: " + name);
+    }
+    return name;
+}
+
+} // namespace
+
+// A folder name we are willing to join onto addonsDir and rename/delete:
+// exactly one plain path component, and never one of our own ".wam-" dirs.
+bool AddonInstaller::isSafeFolderName(const std::string& name) {
+    return !name.empty() && name != "." &&
+           name.find("..") == std::string::npos &&
+           name.find('/') == std::string::npos &&
+           name.find('\\') == std::string::npos &&
+           name.rfind(".wam-", 0) != 0;
+}
+
+std::vector<std::string> AddonInstaller::listZipFolders(const fs::path& zipPath) {
+    zip_t* archive = openZip(zipPath);
+    std::set<std::string> folders;
+    zip_int64_t numEntries = zip_get_num_entries(archive, 0);
+    for (zip_int64_t i = 0; i < numEntries; ++i) {
+        std::string name = checkedEntryName(archive, i);
+        if (name.empty() || name.back() == '/') continue; // extractZip counts folders from files only
+        auto top = topLevelFolder(name);
+        if (!top.empty()) folders.insert(top);
+    }
+    zip_close(archive);
+    if (folders.empty()) throw std::runtime_error("addon zip contains no addon folders");
+    for (const auto& f : folders)
+        if (!isSafeFolderName(f))
+            throw std::runtime_error("addon zip contains an unsafe top-level folder name: '" + f + "'");
+    return std::vector<std::string>(folders.begin(), folders.end());
+}
+
+std::vector<std::string> AddonInstaller::extractZip(const fs::path& zipPath, const fs::path& destDir) {
+    zip_t* archive = openZip(zipPath);
 
     fs::create_directories(destDir);
     std::set<std::string> folders;
 
     zip_int64_t numEntries = zip_get_num_entries(archive, 0);
     for (zip_int64_t i = 0; i < numEntries; ++i) {
-        const char* rawName = zip_get_name(archive, i, 0);
-        if (!rawName) continue;
-        std::string name(rawName);
+        std::string name = checkedEntryName(archive, i);
         if (name.empty()) continue;
-
-        // Guard against zip-slip: reject any entry that escapes destDir,
-        // either via ".." or by being an absolute path (path / "/abs"
-        // discards the left-hand side).
-        if (name.find("..") != std::string::npos || name.front() == '/') {
-            zip_close(archive);
-            throw std::runtime_error("addon zip contains unsafe path entry: " + name);
-        }
 
         fs::path destPath = destDir / name;
         bool isDir = name.back() == '/';

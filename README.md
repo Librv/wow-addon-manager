@@ -89,7 +89,7 @@ lack (authors, versions, dates) at startup.
 
 The sidebar on the left switches between three pages. **Close Sidebar**
 shrinks it to icons. Pages keep their state, so switching away does not lose
-your search.
+your search. The tabs above the page switch between [profiles](#profiles).
 
 All network and disk work runs in the background, so the window never
 freezes. Requests run one at a time, in order. An **Apply** clicked during an
@@ -134,7 +134,29 @@ The toolbar:
 
 - **Check for updates** checks every addon and opens the update review.
 - **Review updates (N)** reopens the review if you closed it early.
-- **Scan for existing addons** finds addons wam does not track yet.
+- **Scan for existing addons** finds addons wam does not track yet. Only
+  for the active profile, since it reads the game folder.
+- **Set active profile** shows on a profile that is not active (see
+  [Profiles](#profiles)).
+
+### Profiles
+
+A profile is a named set of addons for one WoW folder, like a modpack. The
+first one is made for you, named after your flavor (or `Default`).
+
+- **Tabs** at the top show one profile each. The one with a green dot is
+  **active**: its addons are the ones in the game's AddOns folder. Long
+  names are cut off; hover a tab to see the full name.
+- **New profile…** (the `+` button) makes an empty profile with the same
+  folder and flavor as the current one.
+- **Rename…** and **Delete…** are on a right click on a tab, or the menu
+  button at the end of the tabs. The active profile cannot be deleted.
+- A profile that is not active can still be edited: install, update and
+  remove addons as usual. Those changes are saved and applied when you click
+  **Set active profile** on the AddOns page.
+- Switching only installs and removes what differs, from zips wam keeps, so
+  nothing is downloaded again.
+- Addon settings (SavedVariables in `WTF/`) are shared by all profiles.
 
 ### Search
 
@@ -143,13 +165,16 @@ count, latest release date and version. **Install** opens the install window.
 
 ### Settings
 
-- **CurseForge API key**
-- **WoW folder**, and under it its **flavor**, which is worked out from the
+- **CurseForge API key**, shared by all profiles.
+- **WoW folder**, in the section named after the current profile (for
+  example **Profile: Retail**): each profile has its own folder and flavor.
+  Under it is the **flavor**, which is worked out from the
   folder name: `_retail_` is Retail, `_classic_era_` is Classic Era, and
   `_ptr_` and `_beta_` count as Retail.
   - If it cannot tell (for example `_classic_`, which several flavors share),
     pick it by hand.
-  - Changing the folder clears the flavor.
+  - Changing the folder clears the flavor. An active profile stays active on
+    the new folder unless another profile is active there.
 - **Flavors**: every WoW flavor CurseForge knows, with a name you can edit.
   The reset button brings back CurseForge's name.
 
@@ -223,6 +248,20 @@ wam adopt --folder <name> --mod-id <modId>  # track one folder by hand
 wam set-flavor <modId> Retail             # set an adopted addon's flavor
 ```
 
+Profiles (see [Profiles](#profiles)):
+
+```sh
+wam config set-path ~/Games/wow/_retail_  # the selected profile's WoW folder
+wam config set-flavor Retail              # if the folder name did not say
+wam profile list                          # * = selected, (active) = in AddOns
+wam profile create Raid                   # empty, same folder and flavor
+wam profile select Raid                   # later commands act on Raid
+wam --profile Raid install <modId>        # one command on another profile
+wam profile activate Raid                 # put Raid's addons in AddOns
+wam profile rename Raid Mythic
+wam profile delete Mythic                 # not the active one
+```
+
 Notes:
 
 - **Blocked downloads:** `install` says so and prints the exact
@@ -232,6 +271,11 @@ Notes:
   nothing matches, `wam` lists the flavors it knows.
 - **Updates** use the flavor the addon was installed for. `--flavor` on
   `update` changes it.
+- **Profiles:** every command acts on the selected profile, with its folder
+  and flavor. `--profile <name-or-id>` picks another one for one command.
+- **A profile that is not active** can be changed with `install`,
+  `install-manual`, `update` and `remove`; the game folder changes when you
+  run `wam profile activate`. `scan` and `adopt` need the active profile.
 
 ## Flavors
 

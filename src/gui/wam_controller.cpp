@@ -116,6 +116,25 @@ WamController::WamController(QObject* parent) : QObject(parent) {
     connect(worker_, &WamWorker::addonListLoaded, this,
             [this](const QList<wam::InstalledAddon>& a) { installedAddons_.setAddons(a); });
 
+    connect(worker_, &WamWorker::profilesChanged, this, [this](const QVariantList& list, qint64 selectedId) {
+        if (selectedId != currentProfileId_) {
+            // Results still arriving from before the switch were emitted
+            // before this signal (one worker thread, queued in order), so
+            // clearing here drops exactly the previous profile's rows.
+            pendingUpdates_.clear();
+            scanResults_.setGroups({});
+            singleChecks_.clear();
+        }
+        profiles_ = list;
+        currentProfileId_ = selectedId;
+        emit profilesChanged();
+    });
+    connect(worker_, &WamWorker::profileActivated, this, &WamController::profileActivated);
+    connect(worker_, &WamWorker::activateProfileFinished, this, [this] {
+        activating_ = false;
+        emit activatingProfileChanged();
+    });
+
     thread_.start();
     QMetaObject::invokeMethod(worker_, "initialize", Qt::QueuedConnection);
 }
@@ -123,6 +142,14 @@ WamController::WamController(QObject* parent) : QObject(parent) {
 WamController::~WamController() {
     thread_.quit();
     thread_.wait();
+}
+
+bool WamController::currentProfileActive() const {
+    for (const auto& v : profiles_) {
+        const auto m = v.toMap();
+        if (m.value("id").toLongLong() == currentProfileId_) return m.value("active").toBool();
+    }
+    return false;
 }
 
 QVariantList WamController::flavors() const {
@@ -250,7 +277,7 @@ void WamController::checkAllUpdates() {
 void WamController::dispatchApply(qint64 modId, qint64 fileId) {
     pendingUpdates_.setStatus(modId, PendingUpdate::Status::Applying);
     QMetaObject::invokeMethod(worker_, "applyUpdate", Qt::QueuedConnection,
-                              Q_ARG(qint64, modId), Q_ARG(qint64, fileId));
+                              Q_ARG(qint64, modId), Q_ARG(qint64, fileId), Q_ARG(qint64, currentProfileId_));
 }
 
 void WamController::applyUpdate(qint64 modId) {
@@ -280,7 +307,7 @@ void WamController::scan() {
 void WamController::adopt(qint64 modId, const QStringList& folders, bool includeSiblings) {
     QMetaObject::invokeMethod(worker_, "adopt", Qt::QueuedConnection,
                               Q_ARG(qint64, modId), Q_ARG(QStringList, folders),
-                              Q_ARG(bool, includeSiblings), Q_ARG(bool, true));
+                              Q_ARG(bool, includeSiblings), Q_ARG(bool, true), Q_ARG(qint64, currentProfileId_));
 }
 
 void WamController::adoptAllMatched() {
@@ -291,7 +318,8 @@ void WamController::adoptAllMatched() {
         // Rescan only after the last one, not once per row.
         QMetaObject::invokeMethod(worker_, "adopt", Qt::QueuedConnection,
                                   Q_ARG(qint64, matched[i].modId), Q_ARG(QStringList, matched[i].folders),
-                                  Q_ARG(bool, true), Q_ARG(bool, i == matched.size() - 1));
+                                  Q_ARG(bool, true), Q_ARG(bool, i == matched.size() - 1),
+                                  Q_ARG(qint64, currentProfileId_));
     }
 }
 
@@ -300,6 +328,26 @@ void WamController::removeAddon(qint64 modId) {
 }
 void WamController::untrackAddon(qint64 modId) {
     QMetaObject::invokeMethod(worker_, "untrackAddon", Qt::QueuedConnection, Q_ARG(qint64, modId));
+}
+
+void WamController::selectProfile(qint64 id) {
+    QMetaObject::invokeMethod(worker_, "selectProfile", Qt::QueuedConnection, Q_ARG(qint64, id));
+}
+void WamController::createProfile(const QString& name) {
+    QMetaObject::invokeMethod(worker_, "createProfile", Qt::QueuedConnection, Q_ARG(QString, name));
+}
+void WamController::renameProfile(qint64 id, const QString& name) {
+    QMetaObject::invokeMethod(worker_, "renameProfile", Qt::QueuedConnection, Q_ARG(qint64, id), Q_ARG(QString, name));
+}
+void WamController::deleteProfile(qint64 id) {
+    QMetaObject::invokeMethod(worker_, "deleteProfile", Qt::QueuedConnection, Q_ARG(qint64, id));
+}
+
+void WamController::activateProfile(qint64 id) {
+    if (activating_) return;
+    activating_ = true; // until the worker reports back, success or not
+    emit activatingProfileChanged();
+    QMetaObject::invokeMethod(worker_, "activateProfile", Qt::QueuedConnection, Q_ARG(qint64, id));
 }
 
 } // namespace wam::gui

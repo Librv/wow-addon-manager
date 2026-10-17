@@ -30,3 +30,4 @@ What this costs, and what to keep in mind when changing nearby code.
 | 0005 | [Hand-rolled test harness](0005-hand-rolled-tests.md) |
 | 0006 | [Tests answer HTTP themselves](0006-fake-http-in-tests.md) |
 | 0007 | [Keep the API key private](0007-keep-the-api-key-private.md) |
+| 0008 | [Profiles share a library of zips and switch by diff](0008-profiles-share-a-zip-library.md) |

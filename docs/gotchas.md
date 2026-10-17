@@ -27,6 +27,9 @@ takes more than a few minutes to figure out.
   switch: caused by Kirigami's `PageRow` creating pages under a plain
   `QtObject`. Pages live in a `Kirigami.PagePool` to avoid it; do not go back
   to pushing Components or URLs.
+- **No QML warnings at all** when running `wam-gui` from a script or an agent:
+  with stderr not a terminal, Qt sends its log to journald. Set
+  `QT_FORCE_STDERR_LOGGING=1` to see it.
 - **`[undefined]` to `QString` binding errors**: a `QVariantMap` handed to QML
   is missing a key. Fill every key on the C++ side.
 - **Expanded rows closing or the list jumping while scrolling**: `ListView`
