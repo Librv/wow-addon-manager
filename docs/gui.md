@@ -64,9 +64,10 @@ How a profile change reaches the pages:
 
 - Components with knobs (colours, line counts, texts, icon names) keep them in
   a `Tunables` block at the top.
-- Colours come from `AppColors`: three fixed hex colours sampled from the
-  Breeze Dark settings page, so surfaces look the same on any colour scheme.
-  Text and icons still follow the system theme.
+- Colours come from `AppColors`: page background, inset field and border,
+  all read from the system colour scheme (the Window and View colour sets).
+  Do not hardcode hex colours: text follows the scheme, so a fixed dark
+  surface made text unreadable on light schemes.
 - Icons are Breeze icon names.
 - Open/expanded state that must survive scrolling lives on the page, not on
   the row: `ListView` destroys rows that scroll out of view.
