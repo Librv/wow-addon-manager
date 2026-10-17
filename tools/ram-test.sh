@@ -1,31 +1,63 @@
 #!/usr/bin/env bash
-# Idle RAM test of the real wam-gui (real QML, real Kirigami) in the Ubuntu 24.04
-# sandbox, for A/B comparison of code changes. See docs/ram-testing.md.
+# Idle RAM test of the real wam-gui, for A/B comparison of code changes. See
+# docs/ram-testing.md. Native mode (default) runs the repo's normal build on the
+# system Qt and Kirigami. --sandbox is the old Ubuntu 24.04 cloud-sandbox mode.
 #
-# usage: tools/ram-test.sh [--setup-only] [--seed [N]] [--runs N] [--wait SEC] [--software]
-#   --setup-only  install deps and build Kirigami, then stop
-#   --seed [N]    start with N fake tracked addons (default 40) instead of an empty state
-#   --runs N      launches to measure (default 3)
-#   --wait SEC    seconds to idle before reading memory (default 8)
-#   --software    QT_QUICK_BACKEND=software
+# usage: tools/ram-test.sh [options]
+#   --seed [N]     start with N fake tracked addons (default 40) instead of an empty state
+#   --runs N       launches to measure (default 3)
+#   --bin PATH     wam-gui to run (default: build/wam-gui, or $WAM_GUI_BIN)
+#   --qml DIR      load QML from DIR through WAM_QML_DIR (default: the compiled-in QML)
+#   --wayland      use the real Wayland session instead of offscreen
+#   --detail N     after the first run, list the top N mappings by PSS per backing file
+#   --software     QT_QUICK_BACKEND=software
+#   --wait SEC     native: longest idle before reading memory (default 15, stops early
+#                  once PSS settles); --sandbox: fixed idle time (default 8)
+#   --sandbox      install deps, build Kirigami and a scratch project (Ubuntu 24.04 only)
+#   --setup-only   with --sandbox: install deps and build Kirigami, then stop
 # env: WAM_RAMTEST_DIR  work dir (default ~/.cache/wam-ramtest)
+#      WAM_GUI_BIN      same as --bin
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WAM_RAMTEST_DIR:-$HOME/.cache/wam-ramtest}
 P=$WORK/prefix
-RUNS=3; WAIT=8; SEED=0; SETUP_ONLY=0; SOFTWARE=0
+BIN=${WAM_GUI_BIN:-$REPO/build/wam-gui}
+RUNS=3; WAIT=""; SEED=0; SETUP_ONLY=0; SOFTWARE=0; SANDBOX=0; WAYLAND=0; QML=""; DETAIL=0
+need_value() { [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 1; }; }
 while [ $# -gt 0 ]; do
     case $1 in
         --setup-only) SETUP_ONLY=1 ;;
+        --sandbox) SANDBOX=1 ;;
+        --wayland) WAYLAND=1 ;;
         --seed) SEED=40; if [[ ${2:-} =~ ^[0-9]+$ ]]; then SEED=$2; shift; fi ;;
-        --runs) RUNS=$2; shift ;;
-        --wait) WAIT=$2; shift ;;
+        --runs) need_value "$@"; RUNS=$2; shift ;;
+        --wait) need_value "$@"; WAIT=$2; shift ;;
+        --bin) need_value "$@"; BIN=$2; shift ;;
+        --qml) need_value "$@"
+            QML=$(cd "$2" 2>/dev/null && pwd) || { echo "--qml: no such directory: $2" >&2; exit 1; }
+            shift ;;
+        --detail) need_value "$@"; DETAIL=$2; shift ;;
         --software) SOFTWARE=1 ;;
+        -h|--help) sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
 done
+if [ "$SETUP_ONLY" -eq 1 ] && [ "$SANDBOX" -eq 0 ]; then
+    echo "--setup-only needs --sandbox" >&2; exit 2
+fi
+if [ "$SANDBOX" -eq 1 ] && [ "$WAYLAND" -eq 1 ]; then
+    echo "--wayland is native-only" >&2; exit 2
+fi
+PID=""
+cleanup() {
+    [ -n "$PID" ] && kill "$PID" 2>/dev/null
+    return 0
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 log() { echo "[ram-test] $*"; }
 mkdir -p "$WORK"
 
@@ -129,32 +161,90 @@ seed_state() {
         >"$cfg/wow-addon-manager/config.json"
 }
 
-measure() {
-    local cfg=$WORK/xdg-config data=$WORK/xdg-data rt=$WORK/xdg-runtime
-    rm -rf "$cfg" "$data" "$rt"; mkdir -p "$cfg" "$data"; mkdir -m 700 "$rt"
-    [ "$SEED" -gt 0 ] && seed_state "$SEED" "$cfg" "$data"
-    export QT_QPA_PLATFORM=offscreen XDG_CONFIG_HOME=$cfg XDG_DATA_HOME=$data XDG_RUNTIME_DIR=$rt \
-        LD_LIBRARY_PATH=$P/lib/x86_64-linux-gnu QT_PLUGIN_PATH=$P/lib/x86_64-linux-gnu/plugins \
-        QML_IMPORT_PATH=$P/lib/x86_64-linux-gnu/qml WAM_QML_DIR=$REPO/src/gui/qml
-    [ "$SOFTWARE" -eq 1 ] && export QT_QUICK_BACKEND=software
-    local state="empty"; [ "$SEED" -gt 0 ] && state="$SEED fake addons"
-    log "state: $state, idle ${WAIT}s, $RUNS runs (stderr: $WORK/run.log)"
-    printf '%-4s %8s %8s %9s %9s\n' run RSS_MB PSS_MB ANON_MB FILE_MB
-    local sumpss=0 sumanon=0 i pid line rss pss anon file
-    for ((i = 1; i <= RUNS; i++)); do
-        "$WORK/app/b/wam-gui" >"$WORK/run.log" 2>&1 & pid=$!
-        sleep "$WAIT"
-        kill -0 "$pid" 2>/dev/null || { echo "wam-gui exited early:" >&2; tail -10 "$WORK/run.log" >&2; exit 1; }
-        line=$(awk '/^Rss:/{r=$2} /^Pss:/{p=$2} /^Pss_Anon:/{a=$2} /^Pss_File:/{f=$2} END{printf "%d %d %d %d", r/1024, p/1024, a/1024, f/1024}' "/proc/$pid/smaps_rollup")
-        read -r rss pss anon file <<<"$line"
-        printf '%-4s %8s %8s %9s %9s\n' "$i" "$rss" "$pss" "$anon" "$file"
-        sumpss=$((sumpss + pss)); sumanon=$((sumanon + anon))
-        kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-    done
-    printf 'avg  %8s %8s %9s\n' "" "$((sumpss / RUNS))" "$((sumanon / RUNS))"
+# Prints "rss pss anon file shmem" in MB for a pid.
+rollup() {
+    awk '/^Rss:/{r=$2} /^Pss:/{p=$2} /^Pss_Anon:/{a=$2} /^Pss_File:/{f=$2} /^Pss_Shmem:/{s=$2} END{printf "%.1f %.1f %.1f %.1f %.1f", r/1024, p/1024, a/1024, f/1024, s/1024}' "/proc/$1/smaps_rollup" 2>/dev/null || true
 }
 
-[ -f "$P/.ok" ] || setup
-[ "$SETUP_ONLY" -eq 1 ] && { log "setup done"; exit 0; }
-build_app
+# Top mappings by PSS, grouped by backing file.
+detail() {
+    echo "top $DETAIL mappings by PSS (MB), run 1:"
+    awk '/^[0-9a-f]+-[0-9a-f]+ /{name=($6==""?"[anon]":$6)} /^Pss:/{s[name]+=$2} END{for(k in s) printf "%8.1f %s\n", s[k]/1024, k}' "/proc/$1/smaps" 2>/dev/null | sort -rn | head -"$DETAIL" || true
+}
+
+# Waits until PSS moves less than 0.3 MB for 4 samples in a row (every 0.5 s), at most
+# $1 seconds. Sets IDLE_SECS. Returns 1 if the process died.
+wait_settled() {
+    local pid=$1 max=$2 prev=0 stable=0 t=0 p
+    while ((t < max * 2)); do
+        sleep 0.5; t=$((t + 1))
+        kill -0 "$pid" 2>/dev/null || return 1
+        p=$(awk '/^Pss:/{print $2}' "/proc/$pid/smaps_rollup" 2>/dev/null || true)
+        [ -n "$p" ] || return 1
+        if ((t > 4 && p - prev < 300 && prev - p < 300)); then stable=$((stable + 1)); else stable=0; fi
+        prev=$p
+        ((stable >= 4)) && break
+    done
+    IDLE_SECS=$((t / 2))
+}
+
+measure() {
+    local cfg=$WORK/xdg-config data=$WORK/xdg-data rt=$WORK/xdg-runtime home=$WORK/home
+    rm -rf "$cfg" "$data" "$rt" "$home"; mkdir -p "$cfg" "$data" "$home"; mkdir -m 700 "$rt"
+    [ "$SEED" -gt 0 ] && seed_state "$SEED" "$cfg" "$data"
+    # Isolated state, so the real ~/.config/wow-addon-manager is never read or written.
+    local envs=(HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_DATA_HOME="$data" XDG_RUNTIME_DIR="$rt")
+    local bin max
+    if [ "$SANDBOX" -eq 1 ]; then
+        bin=$WORK/app/b/wam-gui; max=${WAIT:-8}
+        envs+=(QT_QPA_PLATFORM=offscreen LD_LIBRARY_PATH="$P/lib/x86_64-linux-gnu"
+            QT_PLUGIN_PATH="$P/lib/x86_64-linux-gnu/plugins"
+            QML_IMPORT_PATH="$P/lib/x86_64-linux-gnu/qml" WAM_QML_DIR="$REPO/src/gui/qml")
+    else
+        bin=$BIN; max=${WAIT:-15}
+        [ -x "$bin" ] || { echo "no wam-gui at $bin (build it, or pass --bin)" >&2; exit 1; }
+        if [ "$WAYLAND" -eq 1 ]; then
+            # XDG_RUNTIME_DIR is overridden, so the socket needs an absolute path.
+            local wd=${WAYLAND_DISPLAY:-wayland-0}
+            [[ $wd == /* ]] || wd=/run/user/$(id -u)/$wd
+            envs+=(QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY="$wd")
+        else
+            envs+=(QT_QPA_PLATFORM=offscreen)
+        fi
+        [ -n "$QML" ] && envs+=(WAM_QML_DIR="$QML")
+    fi
+    [ "$SOFTWARE" -eq 1 ] && envs+=(QT_QUICK_BACKEND=software)
+    local state="empty"; [ "$SEED" -gt 0 ] && state="$SEED fake addons"
+    if [ "$SANDBOX" -eq 1 ]; then
+        log "sandbox: $state, idle ${max}s, $RUNS runs (stderr: $WORK/run.log)"
+    else
+        log "native: $bin, $state, ${QML:+qml $QML, }settle up to ${max}s, $RUNS runs (stderr: $WORK/run.log)"
+    fi
+    printf '%-4s %7s %7s %7s %7s %7s %5s\n' run RSS_MB PSS_MB ANON_MB FILE_MB SHMEM_MB secs
+    local sumrss=0 sumpss=0 sumanon=0 sumfile=0 i pid rss pss anon file shm
+    for ((i = 1; i <= RUNS; i++)); do
+        env "${envs[@]}" "$bin" >"$WORK/run.log" 2>&1 & pid=$!; PID=$pid
+        if [ "$SANDBOX" -eq 1 ]; then
+            sleep "$max"; IDLE_SECS=$max
+            kill -0 "$pid" 2>/dev/null || { echo "wam-gui exited early:" >&2; tail -10 "$WORK/run.log" >&2; exit 1; }
+        else
+            wait_settled "$pid" "$max" || { echo "wam-gui exited early:" >&2; tail -10 "$WORK/run.log" >&2; exit 1; }
+        fi
+        read -r rss pss anon file shm <<<"$(rollup "$pid")"
+        printf '%-4s %7s %7s %7s %7s %7s %5s\n' "$i" "$rss" "$pss" "$anon" "$file" "$shm" "$IDLE_SECS"
+        if [ "$i" -eq 1 ] && [ "$DETAIL" -gt 0 ]; then detail "$pid" >"$WORK/detail.txt"; fi
+        sumrss=$(awk "BEGIN{print $sumrss + $rss}"); sumpss=$(awk "BEGIN{print $sumpss + $pss}")
+        sumanon=$(awk "BEGIN{print $sumanon + $anon}"); sumfile=$(awk "BEGIN{print $sumfile + $file}")
+        kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    done
+    awk -v n="$RUNS" -v r="$sumrss" -v p="$sumpss" -v a="$sumanon" -v f="$sumfile" \
+        'BEGIN{printf "avg  %7.1f %7.1f %7.1f %7.1f\n", r/n, p/n, a/n, f/n}'
+    if [ "$DETAIL" -gt 0 ]; then echo; cat "$WORK/detail.txt"; fi
+}
+
+if [ "$SANDBOX" -eq 1 ]; then
+    [ -f "$P/.ok" ] || setup
+    [ "$SETUP_ONLY" -eq 1 ] && { log "setup done"; exit 0; }
+    build_app
+fi
 measure
