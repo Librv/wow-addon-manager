@@ -43,7 +43,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   # Core and CLI with no Qt installed at all: fails if anything under
-  # src/core/ starts depending on Qt (rule 1 in AGENTS.md).
+  # src/core/ starts depending on Qt (rule 1 in CLAUDE.md).
   core:
     name: Core and CLI without Qt (Ubuntu)
     runs-on: ubuntu-24.04

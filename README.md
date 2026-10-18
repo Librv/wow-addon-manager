@@ -330,7 +330,7 @@ the old version on its own. Also:
 
 ## Contributing
 
-Developer docs are in `AGENTS.md` (rules for people and AI agents) and
+Developer docs are in `CLAUDE.md` (rules for people and AI agents) and
 `docs/`: architecture, GUI development, the CurseForge API, testing, gotchas
 and design decisions.
 
